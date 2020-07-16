@@ -24,7 +24,7 @@ using Oceananigans
 
 using Oceananigans.Grids
 
-grid = RegularCartesianGrid(size=(64, 64, 96), extent=(128, 128, 96))
+grid = RegularCartesianGrid(size=(64, 64, 48), extent=(128, 128, 48))
 
 # ### The Stokes Drift profile
 #
@@ -407,4 +407,4 @@ anim = @animate for (i, iter) in enumerate(iterations)
     iter == iterations[end] && close(file)
 end
 
-mp4(anim, "subsurface_heat_langmuir_HR.mp4", fps = 5) # hide
+mp4(anim, "nonlinear_EOS_crash.mp4", fps = 5) # hide
