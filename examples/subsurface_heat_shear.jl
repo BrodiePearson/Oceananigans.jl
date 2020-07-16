@@ -24,7 +24,7 @@ using Oceananigans
 
 using Oceananigans.Grids
 
-grid = RegularCartesianGrid(size=(32, 32, 48), extent=(128, 128, 96))
+grid = RegularCartesianGrid(size=(64, 64, 96), extent=(128, 128, 96))
 
 # ### The Stokes Drift profile
 #
@@ -36,7 +36,7 @@ nothing # hide
 
 # and
 
-const amplitude = 0.8 # m
+const amplitude = 0.17 # m
 nothing # hide
 
 # The `const` declarations ensure that Stokes drift functions compile on the GPU.
@@ -73,41 +73,13 @@ nothing # hide
 #
 # At the surface at $z=0$, McWilliams et al. (1997) impose wind stress,
 
-Qᵘ = -3.72e-5 # m² s⁻²
+Qᵘ = -1e-4 # m² s⁻² approx. Ramudu 30cm/s ice drift (excluding relative motion)
 nothing # hide
 
-N² = 1.936e-5 # s⁻²
+# and weak cooling with temperature flux
+#Qᵇ = 2.307e-9 # m³ s⁻²
+Qᵇ = 0
 nothing # hide
-
-# add a strong, heterogeneous cooling at the surface
-# First create Heaviside and Interbal functions
-@inline function heaviside(t)
-   0.5 * (sign(t) + 1)
-end
-@inline function interval(t, a, b)
-   heaviside(t-a) - heaviside(t-b)
-end
-
-#@inline Qᵇ_map(y) = 2.307e-7*interval(y, 70, 40) # m³ s⁻²
-
-@inline Qᵇ(x, y, t) = 2.307e-7*interval(y, 40, 70)
-nothing # hide
-
-f(y) = 2.307e-7*interval(y, 40, 70)
-
-#const cooling_flux = 5e-7 # m² s⁻³
-
-# which corresponds to an upward heat flux of ≈ 1000 W m⁻².
-# We cool just long enough to deepen the boundary layer to 100 m.
-
-#target_depth = 100 # m
-
-## Duration of convection to produce a boundary layer with `target_depth`.
-## The "3" is empirical.
-#const t_convection = target_depth^2 * N² / (3 * cooling_flux)
-
-#@inline Qᵇ(x, y, t) = ifelse(t < t_convection, cooling_flux, 0.0)
-#nothing
 
 # Oceananigans uses "positive upward" conventions for all fluxes. In consequence,
 # a negative flux at the surface drives positive velocities, and a positive flux of
@@ -116,17 +88,38 @@ f(y) = 2.307e-7*interval(y, 40, 70)
 # The initial condition and bottom boundary condition for buoyancy
 # impose a linear stratification with buoyancy frequency
 
+N² = 1.936e-5 # s⁻²
+nothing # hide
 
 # To summarize, we impose a surface flux on $u$,
 
 using Oceananigans.BoundaryConditions
+
+# Physical constants.
+ρ₀ = 1027  # Density of seawater [kg/m³]
+heat_cap = 4000  # Specific heat capacity of seawater at constant pressure [J/(kg·K)]
+
+uᶠ = sqrt(-Qᵘ/ρ₀)
+
+Laᵗ = sqrt(uᶠ/uˢ(0))
+
+# We impose the wind stress Fu as a flux at the surface.
+# To impose a flux boundary condition, the top flux imposed should be negative
+# for a heating flux and positive for a cooling flux, thus the minus sign on Fθ.
+Fu = Qᵘ
+Qᵀ = -Qᵇ / (ρ₀*heat_cap)
+Qˢ = 0
 
 u_boundary_conditions = UVelocityBoundaryConditions(grid, top = BoundaryCondition(Flux, Qᵘ))
 nothing # hide
 
 # and a surface flux and bottom linear gradient on buoyancy, $b$,
 
-b_boundary_conditions = TracerBoundaryConditions(grid, top = TracerBoundaryCondition(Flux, :z, Qᵇ),
+T_boundary_conditions = TracerBoundaryConditions(grid, top = BoundaryCondition(Flux, Qᵀ),
+                                                       bottom = BoundaryCondition(Gradient, N²))
+nothing # hide
+
+S_boundary_conditions = TracerBoundaryConditions(grid, top = BoundaryCondition(Flux, Qˢ),
                                                        bottom = BoundaryCondition(Gradient, N²))
 nothing # hide
 
@@ -136,6 +129,8 @@ nothing # hide
 
 f = 1e-4 # s⁻¹
 nothing # hide
+
+FT = Float64
 
 # which is typical for mid-latitudes on Earth.
 
@@ -147,16 +142,26 @@ nothing # hide
 
 using Oceananigans.Buoyancy: BuoyancyTracer
 using Oceananigans.SurfaceWaves: UniformStokesDrift
+using SeawaterPolynomials.TEOS10
+using SeawaterPolynomials: haline_contraction, thermal_expansion
+
+equation_of_state = TEOS10EquationOfState(FT)
+EOS = TEOS10.EOS₁₀
+β = haline_contraction(-1.5, 27.0, 0.0, equation_of_state)
+α = thermal_expansion(-1.5, 27.0, 0.0, equation_of_state)
+
 
 model = IncompressibleModel(        architecture = CPU(),
                                             grid = grid,
-                                         tracers = :b,
-                                        buoyancy = BuoyancyTracer(),
+                                        buoyancy = SeawaterBuoyancy(gravitational_acceleration = g_Earth,
+                                                    equation_of_state = TEOS10EquationOfState(FT),
+                                                    constant_temperature = false, constant_salinity = false),
                                         coriolis = FPlane(f=f),
                                          closure = AnisotropicMinimumDissipation(),
                                    surface_waves = UniformStokesDrift(∂z_uˢ=∂z_uˢ),
                              boundary_conditions = (u=u_boundary_conditions,
-                                                    b=b_boundary_conditions),
+                                                    T=T_boundary_conditions,
+                                                    S=S_boundary_conditions),
                             )
 
 # ## Initial conditions
@@ -167,18 +172,46 @@ model = IncompressibleModel(        architecture = CPU(),
 Ξ(z) = randn() * exp(z / 4)
 nothing # hide
 
-# Set constant temperature profile
-η(z) =  N²*z
-nothing # hide
+# Create a buoyancy profile with a subsurface maximum
+# First create Heaviside and Interbal functions
+function heaviside(t)
+   0.5 * (sign(t) + 1)
+end
+function interval(t, a, b)
+   heaviside(t-a) - heaviside(t-b)
+end
+
+# Define initial temperature profile to appoximate Ramudu - first a constant profile
 # Add a Gaussian maximum between 15m and 25m depth (peaking at 20m)
 # Add a second Gaussian maximum between 40 and 50 m depth (triple amplitude of other peak)
+# The second Gaussian is skewed to have a sharp temperature change at its
+# upper boundary
 
-# Add constant stratification below 50m
+η(z) = -1.5 + 0.2*interval(z,-30,-15)*exp(-(z+22)^2/10) +
+    + 1.5*interval(z,-50,-40)*exp(-(z+50)^2/100) +
+    + 1.5*interval(z,-96,-50.01)*exp(-(z+50)^2/10000) +
+    + sqrt(abs(Qᵀ)) * 1e-1 * Ξ(z)
+nothing # hide
 
+#Define temperature and convert from Celsius to Kelvin for EOS
+Tᵢ(x, y, z) = η(z)
+nothing # hide
 
-# Impose a subsurface buoyancy maximum (this will convect as linear EOS),
+# Define initial salinity profile (PSW only)
+# constant above 40m, increase quadratically to 33 below
+#salinity(z) = 27.5 + (0.02/30.)*heaviside(-z-10)*(-z-10) +
+#    + 4*heaviside(-z-50)*tanh(-(z+50)/25) +
+#    + sqrt(abs(Qˢ)) * 1e-1 * Ξ(z)
+#nothing # hide
 
-bᵢ(x, y, z) = η(z)
+# Define initial salinity profile
+# constant above 40m, increase quadratically to 33 below
+salinity(z) = 27.5 + heaviside(-z-12)*tanh(-(z+12)/10) +
+    + 4*heaviside(-z-40)*tanh(-(z+40)/25) +
+    + sqrt(abs(Qˢ)) * 1e-1 * Ξ(z)
+nothing # hide
+
+Sᵢ(x, y, z) = salinity(z)
 nothing # hide
 
 # The velocity initial condition is zero *Eulerian* velocity. This means that we
@@ -189,7 +222,7 @@ uᵢ(x, y, z) = uˢ(z) + sqrt(abs(Qᵘ)) * 1e-1 * Ξ(z)
 
 wᵢ(x, y, z) = sqrt(abs(Qᵘ)) * 1e-1 * Ξ(z)
 
-set!(model, u=uᵢ, w=wᵢ, b=bᵢ)
+set!(model, u=uᵢ, w=wᵢ, T=Tᵢ, S=Sᵢ)
 
 # ## Setting up the simulation
 #
@@ -272,11 +305,13 @@ nothing # hide
 
 xw, yw, zw = nodes(model.velocities.w)
 xu, yu, zu = nodes(model.velocities.u)
-xb, yb, zb = nodes(model.tracers.b)
+xT, yT, zT = nodes(model.tracers.T)
+xS, yS, zS = nodes(model.tracers.S)
 
 xw, yw, zw = xw[:], yw[:], zw[:]
 xu, yu, zu = xu[:], yu[:], zu[:]
-xb, yb, zb = xb[:], yb[:], zb[:]
+xT, yT, zT = xT[:], yT[:], zT[:]
+xS, yS, zS = xS[:], yS[:], zS[:]
 nothing # hide
 
 # Next, we open the JLD2 file, and extract the iterations we ended up saving at,
@@ -313,17 +348,20 @@ anim = @animate for (i, iter) in enumerate(iterations)
     ## Load 3D fields from file, omitting halo regions
     w = file["timeseries/w/$iter"][2:end-1, 2:end-1, 2:end-1]
     u = file["timeseries/u/$iter"][2:end-1, 2:end-1, 2:end-1]
-    b = file["timeseries/b/$iter"][2:end-1, 2:end-1, 2:end-1]
+    T = file["timeseries/T/$iter"][2:end-1, 2:end-1, 2:end-1]
+    S = file["timeseries/S/$iter"][2:end-1, 2:end-1, 2:end-1]
 
     ## Extract slices
     wxy = w[:, :, k]
     wxz = w[:, 1, :]
     uxz = u[:, 1, :]
-    bz = b[1, 1, :]
+    Tz = T[1, 1, :]
+    Sz = S[1, 1, :]
 
     wlim = 0.02
     ulim = 0.05
-    blim = 0.002
+    Tlim = 0.002
+    Slim = 1.5
     wlevels = nice_divergent_levels(w, wlim)
     ulevels = nice_divergent_levels(w, ulim)
 
@@ -357,17 +395,25 @@ anim = @animate for (i, iter) in enumerate(iterations)
                              xlabel = "x (m)",
                              ylabel = "z (m)")
 
-    bz_plot = plot(bz, zb;
-                            xlims = (-blim, 0.002),
+    Tz_plot = plot(Tz, zT;
+                            xlims = (-1.6, 0.2),
                             ylims = (-grid.Lz, 0),
-                             xlabel = "b (?)",
+                             xlabel = "Pot. Temp. (C)",
                              ylabel = "z (m)",
                              legend = false)
 
-    plot(wxy_plot, wxz_plot, uxz_plot, bz_plot, layout=(1, 4), size=(1300, 400),
-         title = ["w(x, y, z=-8, t) (m/s)" "w(x, y=0, z, t) (m/s)" "u(x, y = 0, z, t) (m/s)" "b(x=0, y = 0, z, t) (m/s)"])
+    Sz_plot = plot(Sz, zS;
+                            xlims = (27, 33),
+                            ylims = (-grid.Lz, 0),
+                            xlabel = "S (g/kg)",
+                            ylabel = "z (m)",
+                            legend = false)
+
+    l = @layout [a b c; d e]
+    plot(wxy_plot, wxz_plot, uxz_plot, Tz_plot, Sz_plot, layout=l, size=(1300, 800),
+         title = ["w(x, y, z=-8, t) (m/s)" "w(x, y=0, z, t) (m/s)" "u(x, y = 0, z, t) (m/s)" "T(x=0, y = 0, z, t) (m/s)" "S(x=0, y = 0, z, t) (m/s)"])
 
     iter == iterations[end] && close(file)
 end
 
-mp4(anim, "heterogeneous_boundary_conditions.mp4", fps = 5) # hide
+mp4(anim, "subsurface_heat_langmuir_HR.mp4", fps = 5) # hide
