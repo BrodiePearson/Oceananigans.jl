@@ -24,7 +24,7 @@ using Oceananigans
 
 using Oceananigans.Grids
 
-grid = RegularCartesianGrid(size=(64, 64, 96), extent=(128, 128, 96))
+grid = RegularCartesianGrid(size=(32, 32, 48), extent=(64, 64, 96))
 
 # ### The Stokes Drift profile
 #
@@ -36,7 +36,7 @@ nothing # hide
 
 # and
 
-const amplitude = 0.17 # m
+const amplitude = 0.0 # m
 nothing # hide
 
 # The `const` declarations ensure that Stokes drift functions compile on the GPU.
@@ -99,7 +99,7 @@ using Oceananigans.BoundaryConditions
 ρ₀ = 1027  # Density of seawater [kg/m³]
 heat_cap = 4000  # Specific heat capacity of seawater at constant pressure [J/(kg·K)]
 
-uᶠ = sqrt(-Qᵘ/ρ₀)
+uᶠ = sqrt(-Qᵘ)
 
 Laᵗ = sqrt(uᶠ/uˢ(0))
 
@@ -188,8 +188,8 @@ end
 # upper boundary
 
 η(z) = -1.5 + 0.2*interval(z,-30,-15)*exp(-(z+22)^2/10) +
-    + 1.5*interval(z,-50,-40)*exp(-(z+50)^2/100) +
-    + 1.5*interval(z,-96,-50.01)*exp(-(z+50)^2/10000) +
+    + 1.5*interval(z,-55,-45)*exp(-(z+55)^2/100) +
+    + 1.5*interval(z,-96,-55)*exp(-(z+55)^2/10000) +
     + sqrt(abs(Qᵀ)) * 1e-1 * Ξ(z)
 nothing # hide
 
@@ -416,4 +416,4 @@ anim = @animate for (i, iter) in enumerate(iterations)
     iter == iterations[end] && close(file)
 end
 
-mp4(anim, "subsurface_heat_langmuir_HR.mp4", fps = 5) # hide
+mp4(anim, "subsurface_heat_shear.mp4", fps = 5) # hide

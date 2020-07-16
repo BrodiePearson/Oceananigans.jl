@@ -24,7 +24,7 @@ using Oceananigans
 
 using Oceananigans.Grids
 
-grid = RegularCartesianGrid(size=(64, 64, 96), extent=(128, 128, 96))
+grid = RegularCartesianGrid(size=(32, 32, 48), extent=(64, 64, 96))
 
 # ### The Stokes Drift profile
 #
@@ -36,7 +36,7 @@ nothing # hide
 
 # and
 
-const amplitude = 0.17 # m
+const amplitude = 1.0 # m
 nothing # hide
 
 # The `const` declarations ensure that Stokes drift functions compile on the GPU.
@@ -48,6 +48,11 @@ nothing # hide
 using Oceananigans.Buoyancy: g_Earth
 
 const Uˢ = amplitude^2 * wavenumber * sqrt(g_Earth * wavenumber) # m s⁻¹
+
+using Oceananigans.Buoyancy: BuoyancyTracer
+using Oceananigans.SurfaceWaves: UniformStokesDrift
+using SeawaterPolynomials.TEOS10
+using SeawaterPolynomials: haline_contraction, thermal_expansion
 
 # The Stokes drift profile is then,
 
@@ -95,11 +100,12 @@ nothing # hide
 
 using Oceananigans.BoundaryConditions
 
+FT = Float64
 # Physical constants.
-ρ₀ = 1027  # Density of seawater [kg/m³]
-heat_cap = 4000  # Specific heat capacity of seawater at constant pressure [J/(kg·K)]
+eos = TEOS10EquationOfState(FT)
+ρ₀ = eos.reference_density
 
-uᶠ = sqrt(-Qᵘ/ρ₀)
+uᶠ = sqrt(-Qᵘ)
 
 Laᵗ = sqrt(uᶠ/uˢ(0))
 
@@ -107,8 +113,8 @@ Laᵗ = sqrt(uᶠ/uˢ(0))
 # To impose a flux boundary condition, the top flux imposed should be negative
 # for a heating flux and positive for a cooling flux, thus the minus sign on Fθ.
 Fu = Qᵘ
-Qᵀ = -Qᵇ / (ρ₀*heat_cap)
-Qˢ = 0
+Qᵀ = 0.0
+Qˢ = 0.0
 
 u_boundary_conditions = UVelocityBoundaryConditions(grid, top = BoundaryCondition(Flux, Qᵘ))
 nothing # hide
@@ -130,8 +136,6 @@ nothing # hide
 f = 1e-4 # s⁻¹
 nothing # hide
 
-FT = Float64
-
 # which is typical for mid-latitudes on Earth.
 
 # ## Model instantiation
@@ -139,11 +143,6 @@ FT = Float64
 # Finally, we are ready to build the model. We use the AnisotropicMinimumDissipation
 # model for large eddy simulation. Because our Stokes drift does not vary in $x, y$,
 # we use `UniformStokesDrift`, which expects Stokes drift functions of $z, t$ only.
-
-using Oceananigans.Buoyancy: BuoyancyTracer
-using Oceananigans.SurfaceWaves: UniformStokesDrift
-using SeawaterPolynomials.TEOS10
-using SeawaterPolynomials: haline_contraction, thermal_expansion
 
 equation_of_state = TEOS10EquationOfState(FT)
 EOS = TEOS10.EOS₁₀
@@ -188,8 +187,8 @@ end
 # upper boundary
 
 η(z) = -1.5 + 0.2*interval(z,-30,-15)*exp(-(z+22)^2/10) +
-    + 1.5*interval(z,-50,-40)*exp(-(z+50)^2/100) +
-    + 1.5*interval(z,-96,-50.01)*exp(-(z+50)^2/10000) +
+    + 1.5*interval(z,-55,-45)*exp(-(z+55)^2/100) +
+    + 1.5*interval(z,-96,-55)*exp(-(z+55)^2/10000) +
     + sqrt(abs(Qᵀ)) * 1e-1 * Ξ(z)
 nothing # hide
 
@@ -214,11 +213,12 @@ nothing # hide
 Sᵢ(x, y, z) = salinity(z)
 nothing # hide
 
-# The velocity initial condition is zero *Eulerian* velocity. This means that we
+# The velocity initial condition is zero *Lagrangian* velocity. This means that we
 # must add the Stokes drift profile to the $u$ velocity field. We also add noise scaled
 # by the friction velocity to $u$ and $w$.
 
-uᵢ(x, y, z) = uˢ(z) + sqrt(abs(Qᵘ)) * 1e-1 * Ξ(z)
+# uᵢ(x, y, z) = uˢ(z) + sqrt(abs(Qᵘ)) * 1e-1 * Ξ(z)
+uᵢ(x, y, z) = sqrt(abs(Qᵘ)) * 1e-1 * Ξ(z)
 
 wᵢ(x, y, z) = sqrt(abs(Qᵘ)) * 1e-1 * Ξ(z)
 
@@ -416,4 +416,4 @@ anim = @animate for (i, iter) in enumerate(iterations)
     iter == iterations[end] && close(file)
 end
 
-mp4(anim, "subsurface_heat_langmuir_HR.mp4", fps = 5) # hide
+mp4(anim, "subsurface_heat_langmuir.mp4", fps = 5) # hide
