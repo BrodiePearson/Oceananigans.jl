@@ -79,21 +79,26 @@ nothing # hide
 N² = 1.936e-5 # s⁻²
 nothing # hide
 
+# Physical constants.
+ρ₀ = 1027  # Density of seawater [kg/m³]
+uᶠ = sqrt(-Qᵘ)
+Laᵗ = sqrt(uᶠ/uˢ(0))
+
 # add a strong, heterogeneous cooling at the surface
 # First create Heaviside and Interbal functions
 @inline function heaviside(t)
    0.5 * (sign(t) + 1)
 end
 @inline function interval(t, a, b)
+    # Interval is +1 if t is between a and b, and a<b
    heaviside(t-a) - heaviside(t-b)
 end
 
 #@inline Qᵇ_map(y) = 2.307e-7*interval(y, 70, 40) # m³ s⁻²
 
-@inline Qᵇ(x, y, t) = 2.307e-7*interval(y, 40, 70)
+@inline Qᵇ(x, y, t) = 2.307e-6*interval(y, 40, 80)
 nothing # hide
 
-f(y) = 2.307e-7*interval(y, 40, 70)
 
 #const cooling_flux = 5e-7 # m² s⁻³
 
@@ -370,4 +375,4 @@ anim = @animate for (i, iter) in enumerate(iterations)
     iter == iterations[end] && close(file)
 end
 
-mp4(anim, "heterogeneous_boundary_conditions.mp4", fps = 5) # hide
+mp4(anim, "seaice_lead_y.mp4", fps = 5) # hide
