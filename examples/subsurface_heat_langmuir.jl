@@ -10,6 +10,8 @@
 #   * how to run large eddy simulations with surface wave effects
 #     via the Craik-Leibovich approximation
 
+using Statistics
+
 using Oceananigans
 
 # ## Model set-up
@@ -78,7 +80,7 @@ nothing # hide
 #
 # At the surface at $z=0$, McWilliams et al. (1997) impose wind stress,
 
-Qᵘ = -1e-4 # m² s⁻² approx. Ramudu 30cm/s ice drift (excluding relative motion)
+Qᵘ = -1e-5 # m² s⁻² approx. Ramudu 30cm/s ice drift (excluding relative motion)
 nothing # hide
 
 # and weak cooling with temperature flux
@@ -336,6 +338,43 @@ function nice_divergent_levels(c, clim)
     return levels
 end
 nothing # hide
+
+# Create a plot showing the initial and end profiles of T and S
+T_init = file["timeseries/T/0"][2:end-1, 2:end-1, 2:end-1]
+S_init = file["timeseries/S/0"][2:end-1, 2:end-1, 2:end-1]
+end_time = last(iterations)
+Tₑ = file["timeseries/T/$end_time"][2:end-1, 2:end-1, 2:end-1]
+Sₑ = file["timeseries/S/$end_time"][2:end-1, 2:end-1, 2:end-1]
+mean_Tₑ = mean(mean(Tₑ, dims=1), dims=2)
+mean_T_init = mean(mean(T_init, dims=1), dims=2)
+mean_Sₑ = mean(mean(Sₑ, dims=1), dims=2)
+mean_S_init = mean(mean(S_init, dims=1), dims=2)
+
+plot_T_evolution = plot([mean_T_init[1,1,:], mean_Tₑ[1,1,:]], zT;
+                        xlims = (-1.6, 0.2),
+                        ylims = (-grid.Lz, 0),
+                         xlabel = "Pot. Temp. (C)",
+                         ylabel = "z (m)",
+                         label = ["t = 0" "t = 4 hours"])
+
+plot_S_evolution = plot([mean_S_init[1,1,:], mean_Sₑ[1,1,:]], zT;
+                        xlims = (27, 33),
+                        ylims = (-grid.Lz, 0),
+                        xlabel = "S (g/kg)",
+                        ylabel = "z (m)",
+                        label = ["t = 0" "t = 4 hours"])
+
+l = @layout [a b]
+plot_changes = plot(plot_T_evolution, plot_S_evolution, layout=l, size=(800, 400),
+    title = ["T(x=0, y = 0, z, t) (m/s)" "S(x=0, y = 0, z, t) (m/s)"])
+
+png(plot_changes, "Profiles_TS")
+
+using LESbrary
+using LESbrary.Statistics
+#using LESbrary: TurbulentKineticEnergy
+#tke = TurbulentKineticEnergy(model)
+LESbrary_stats = horizontal_averages(model)
 
 # Finally, we're ready to animate.
 
