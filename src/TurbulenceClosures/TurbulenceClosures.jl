@@ -1,32 +1,30 @@
 module TurbulenceClosures
 
 export
-  IsotropicViscosity,
-  ConstantIsotropicDiffusivity,
-  ConstantAnisotropicDiffusivity,
-  AnisotropicBiharmonicDiffusivity,
-  TwoDimensionalLeith,
-  ConstantSmagorinsky,
-  SmagorinskyLilly,
-  BlasiusSmagorinsky,
-  AnisotropicMinimumDissipation,
-  RozemaAnisotropicMinimumDissipation,
-  VerstappenAnisotropicMinimumDissipation,
+    AbstractEddyViscosityClosure,
+    IsotropicDiffusivity,
+    AnisotropicDiffusivity,
+    AnisotropicBiharmonicDiffusivity,
+    TwoDimensionalLeith,
+    ConstantSmagorinsky,
+    SmagorinskyLilly,
+    AnisotropicMinimumDissipation,
+    HorizontallyCurvilinearAnisotropicDiffusivity,
 
-  DiffusivityFields,
-  calculate_diffusivities!,
+    DiffusivityFields,
+    calculate_diffusivities!,
 
-  ∇_κ_∇c,
-  ∇_κ_∇T,
-  ∇_κ_∇S,
-  ∂ⱼ_2ν_Σ₁ⱼ,
-  ∂ⱼ_2ν_Σ₂ⱼ,
-  ∂ⱼ_2ν_Σ₃ⱼ,
+    ∇_κ_∇c,
+    ∇_κ_∇T,
+    ∇_κ_∇S,
+    ∂ⱼ_2ν_Σ₁ⱼ,
+    ∂ⱼ_2ν_Σ₂ⱼ,
+    ∂ⱼ_2ν_Σ₃ⱼ,
 
-  cell_diffusion_timescale
+    cell_diffusion_timescale
 
 using CUDA
-using GPUifyLoops
+using KernelAbstractions
 
 import Oceananigans.Utils: with_tracers
 
@@ -35,10 +33,10 @@ using Oceananigans.Grids
 using Oceananigans.Operators
 using Oceananigans.BoundaryConditions
 using Oceananigans.Fields
-using Oceananigans.Buoyancy
+using Oceananigans.BuoyancyModels
 using Oceananigans.Utils
 
-using Oceananigans.Architectures: AbstractArchitecture, device, @hascuda
+using Oceananigans.Architectures: AbstractArchitecture, device
 
 #####
 ##### Molecular viscosity and thermal diffusivity definitions
@@ -55,52 +53,20 @@ const κ₀ = 1.46e-7
 #####
 
 """
-    TurbulenceClosure{FT}
+    AbstractTurbulenceClosure
 
-Abstract supertype for turbulence closures with model parameters stored as properties of
-type `FT`.
+Abstract supertype for turbulence closures.
 """
-abstract type TurbulenceClosure{FT} end
+abstract type AbstractTurbulenceClosure end
 
-"""
-    IsotropicViscosity{FT} <: TurbulenceClosure{FT}
-
-Abstract supertype for turbulence closures that are defined by an isotropic viscosity
-and isotropic diffusivities with model parameters stored as properties of type `FT`.
-"""
-abstract type IsotropicViscosity{FT} <: TurbulenceClosure{FT} end
 
 """
-    TensorDiffusivity{FT} <: TurbulenceClosure{FT}
+    AbstractTensorDiffusivity <: AbstractTurbulenceClosure
 
 Abstract supertype for turbulence closures that are defined by a tensor viscosity and
-tensor diffusivities with model parameters stored as properties of type `FT`.
+tensor diffusivities.
 """
-abstract type TensorDiffusivity{FT} <: TurbulenceClosure{FT} end
-
-"""
-    AbstractSmagorinsky{FT}
-
-Abstract supertype for large eddy simulation models based off the model described
-by Smagorinsky with model parameters stored as properties of type `FT`.
-"""
-abstract type AbstractSmagorinsky{FT} <: IsotropicViscosity{FT} end
-
-"""
-    AbstractAnisotropicMinimumDissipation{FT}
-
-Abstract supertype for large eddy simulation models based on the anisotropic minimum
-dissipation principle with model parameters stored as properties of type `FT`.
-"""
-abstract type AbstractAnisotropicMinimumDissipation{FT} <: IsotropicViscosity{FT} end
-
-"""
-    AbstractLeith{FT}
-
-Abstract supertype for large eddy simulation models based on the Leith viscosity
-principle with model parameters stored as properties of type `FT`.
-"""
-abstract type AbstractLeith{FT} <: IsotropicViscosity{FT} end
+abstract type AbstractTensorDiffusivity <: AbstractTurbulenceClosure end
 
 #####
 ##### 'Tupled closure' implementation
@@ -108,7 +74,7 @@ abstract type AbstractLeith{FT} <: IsotropicViscosity{FT} end
 
 for stress_div in (:∂ⱼ_2ν_Σ₁ⱼ, :∂ⱼ_2ν_Σ₂ⱼ, :∂ⱼ_2ν_Σ₃ⱼ)
     @eval begin
-        @inline function $stress_div(i, j, k, grid::AbstractGrid{FT}, closure_tuple::Tuple, U,
+        @inline function $stress_div(i, j, k, grid::AbstractGrid{FT}, clock, closure_tuple::Tuple, U,
                                      K_tuple, args...) where FT
 
             stress_div_ijk = zero(FT)
@@ -116,7 +82,7 @@ for stress_div in (:∂ⱼ_2ν_Σ₁ⱼ, :∂ⱼ_2ν_Σ₂ⱼ, :∂ⱼ_2ν_Σ₃
             ntuple(Val(length(closure_tuple))) do α
                 @inbounds closure = closure_tuple[α]
                 @inbounds K = K_tuple[α]
-                stress_div_ijk += $stress_div(i, j, k, grid, closure, U, K, args...)
+                stress_div_ijk += $stress_div(i, j, k, grid, clock, closure, U, K, args...)
             end
 
             return stress_div_ijk
@@ -124,14 +90,15 @@ for stress_div in (:∂ⱼ_2ν_Σ₁ⱼ, :∂ⱼ_2ν_Σ₂ⱼ, :∂ⱼ_2ν_Σ₃
     end
 end
 
-@inline function ∇_κ_∇c(i, j, k, grid::AbstractGrid{FT}, closure_tuple::Tuple,
+@inline function ∇_κ_∇c(i, j, k, grid::AbstractGrid{FT}, clock, closure_tuple::Tuple,
                         c, tracer_index, K_tuple, args...) where FT
+
     flux_div_ijk = zero(FT)
 
     ntuple(Val(length(closure_tuple))) do α
         @inbounds closure = closure_tuple[α]
         @inbounds K = K_tuple[α]
-        flux_div_ijk +=  ∇_κ_∇c(i, j, k, grid, closure, c, tracer_index, K, args...)
+        flux_div_ijk +=  ∇_κ_∇c(i, j, k, grid, clock, closure, c, tracer_index, K, args...)
     end
 
     return flux_div_ijk
@@ -155,21 +122,24 @@ with_tracers(tracers, closure_tuple::Tuple) =
 #####
 
 include("turbulence_closure_utils.jl")
-include("closure_operators.jl")
 include("diffusion_operators.jl")
 include("viscous_dissipation_operators.jl")
 include("velocity_tracer_gradients.jl")
+include("abstract_eddy_viscosity_closures.jl")
 
 include("closure_tuples.jl")
 
-include("turbulence_closure_implementations/constant_isotropic_diffusivity.jl")
-include("turbulence_closure_implementations/constant_anisotropic_diffusivity.jl")
+include("turbulence_closure_implementations/nothing_closure.jl")
+include("turbulence_closure_implementations/isotropic_diffusivity.jl")
+include("turbulence_closure_implementations/anisotropic_diffusivity.jl")
+include("turbulence_closure_implementations/horizontally_curvilinear_anisotropic_diffusivity.jl")
+include("turbulence_closure_implementations/horizontally_curvilinear_anisotropic_biharmonic_diffusivity.jl")
 include("turbulence_closure_implementations/anisotropic_biharmonic_diffusivity.jl")
+
+# Eddy viscosity closures
 include("turbulence_closure_implementations/leith_enstrophy_diffusivity.jl")
 include("turbulence_closure_implementations/smagorinsky_lilly.jl")
-include("turbulence_closure_implementations/blasius_smagorinsky.jl")
-include("turbulence_closure_implementations/verstappen_anisotropic_minimum_dissipation.jl")
-include("turbulence_closure_implementations/rozema_anisotropic_minimum_dissipation.jl")
+include("turbulence_closure_implementations/anisotropic_minimum_dissipation.jl")
 
 include("diffusivity_fields.jl")
 include("turbulence_closure_diagnostics.jl")
@@ -177,13 +147,6 @@ include("turbulence_closure_diagnostics.jl")
 #####
 ##### Some value judgements here
 #####
-
-"""
-    AnisotropicMinimumDissipation
-
-An alias for `VerstappenAnisotropicMinimumDissipation`.
-"""
-const AnisotropicMinimumDissipation = VerstappenAnisotropicMinimumDissipation
 
 """
     ConstantSmagorinsky

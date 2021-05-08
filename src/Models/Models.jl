@@ -1,39 +1,27 @@
 module Models
 
-export IncompressibleModel, NonDimensionalModel, Clock, tick!, state
+export
+    IncompressibleModel, NonDimensionalIncompressibleModel, ShallowWaterModel,
+    HydrostaticFreeSurfaceModel, VectorInvariant,
+    ExplicitFreeSurface, ImplicitFreeSurface,
+    HydrostaticSphericalCoriolis, VectorInvariantEnstrophyConserving,
+    PrescribedVelocityFields
 
-using Adapt
+using Oceananigans: AbstractModel
 
-using Oceananigans.Architectures
-using Oceananigans.Fields
-using Oceananigans.Coriolis
-using Oceananigans.Buoyancy
-using Oceananigans.TurbulenceClosures
-using Oceananigans.BoundaryConditions
-using Oceananigans.Solvers
-using Oceananigans.Forcing
-using Oceananigans.Utils
+abstract type AbstractIncompressibleModel{TS} <: AbstractModel{TS} end
 
-"""
-    AbstractModel
+include("IncompressibleModels/IncompressibleModels.jl")
+include("HydrostaticFreeSurfaceModels/HydrostaticFreeSurfaceModels.jl")
+include("ShallowWaterModels/ShallowWaterModels.jl")
 
-Abstract supertype for models.
-"""
-abstract type AbstractModel end
+using .IncompressibleModels: IncompressibleModel, NonDimensionalIncompressibleModel
+using .ShallowWaterModels: ShallowWaterModel
 
-"""
-    state(model)
-
-Returns a `NamedTuple` with fields `velocities, tracers, diffusivities, tendencies` 
-corresponding to `NamedTuple`s of `OffsetArray`s that reference each of the field's data.
-"""
-@inline state(model) = (   velocities = datatuple(model.velocities),
-                              tracers = datatuple(model.tracers),
-                        diffusivities = datatuple(model.diffusivities))
-
-include("clock.jl")
-include("incompressible_model.jl")
-include("non_dimensional_model.jl")
-include("show_models.jl")
+using .HydrostaticFreeSurfaceModels:
+    HydrostaticFreeSurfaceModel, VectorInvariant,
+    ExplicitFreeSurface, ImplicitFreeSurface,
+    HydrostaticSphericalCoriolis, VectorInvariantEnstrophyConserving,
+    PrescribedVelocityFields
 
 end

@@ -1,9 +1,12 @@
+import Oceananigans: tupleit
+
 #####
 ##### Some utilities for tupling
 #####
 
+tupleit(::Nothing) = ()
+tupleit(t::NamedTuple) = t
 tupleit(t::Tuple) = t
-tupleit(a::AbstractArray) = Tuple(a)
 tupleit(nt) = tuple(nt)
 
 parenttuple(obj) = Tuple(f.data.parent for f in obj)

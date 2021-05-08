@@ -1,13 +1,13 @@
 module Architectures
 
-export
-    @hascuda,
-    AbstractArchitecture, CPU, GPU,
-    device, architecture, array_type
+export AbstractArchitecture, AbstractCPUArchitecture, AbstractGPUArchitecture
+export CPU, GPU
+export device, architecture, array_type, arch_array
 
 using CUDA
-
-import GPUifyLoops
+using KernelAbstractions
+using Adapt
+using OffsetArrays
 
 """
     AbstractArchitecture
@@ -16,37 +16,59 @@ Abstract supertype for architectures supported by Oceananigans.
 """
 abstract type AbstractArchitecture end
 
+
+"""
+    AbstractCPUArchitecture
+
+Abstract supertype for CPU architectures supported by Oceananigans.
+"""
+abstract type AbstractCPUArchitecture <: AbstractArchitecture end
+
+"""
+    AbstractGPUArchitecture
+
+Abstract supertype for GPU architectures supported by Oceananigans.
+"""
+abstract type AbstractGPUArchitecture <: AbstractArchitecture end
+
 """
     CPU <: AbstractArchitecture
 
-Run Oceananigans on a single-core of a CPU.
+Run Oceananigans on one CPU node. Uses multiple threads if the environment
+variable `JULIA_NUM_THREADS` is set.
 """
-struct CPU <: AbstractArchitecture end
+struct CPU <: AbstractCPUArchitecture end
 
 """
     GPU <: AbstractArchitecture
 
 Run Oceananigans on a single NVIDIA CUDA GPU.
 """
-struct GPU <: AbstractArchitecture end
+struct GPU <: AbstractGPUArchitecture end
 
-"""
-    @hascuda expr
+device(::AbstractCPUArchitecture) = KernelAbstractions.CPU()
+device(::AbstractGPUArchitecture) = KernelAbstractions.CUDADevice()
 
-A macro to compile and execute `expr` only if CUDA is installed and available. Generally used to
-wrap expressions that can only be compiled if `CuArrays` and `CUDAnative` can be loaded.
-"""
-macro hascuda(expr)
-    return has_cuda() ? :($(esc(expr))) : :(nothing)
-end
+architecture() = nothing
+architecture(::Number) = nothing
+architecture(::Array) = CPU()
+architecture(::CuArray) = GPU()
 
-device(::CPU) = GPUifyLoops.CPU()
-device(::GPU) = GPUifyLoops.CUDA()
+array_type(::CPU) = Array
+array_type(::GPU) = CuArray
 
-         architecture(::Array)   = CPU()
-@hascuda architecture(::CuArray) = GPU()
+arch_array(::AbstractCPUArchitecture, A::Array) = A
+arch_array(::AbstractCPUArchitecture, A::CuArray) = Array(A)
+arch_array(::AbstractGPUArchitecture, A::Array) = CuArray(A)
+arch_array(::AbstractGPUArchitecture, A::CuArray) = A
 
-         array_type(::CPU) = Array
-@hascuda array_type(::GPU) = CuArray
+const OffsetCPUArray = OffsetArray{FT, N, <:Array} where {FT, N}
+const OffsetGPUArray = OffsetArray{FT, N, <:CuArray} where {FT, N}
+
+Adapt.adapt_structure(::CPU, a::OffsetCPUArray) = a
+Adapt.adapt_structure(::GPU, a::OffsetGPUArray) = a
+
+Adapt.adapt_structure(::GPU, a::OffsetCPUArray) = OffsetArray(CuArray(a.parent), a.offsets...)
+Adapt.adapt_structure(::CPU, a::OffsetGPUArray) = OffsetArray(Array(a.parent), a.offsets...)
 
 end

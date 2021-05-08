@@ -1,13 +1,15 @@
+using Oceananigans.Fields: AbstractField
+
 #####
 ##### The turbulence closure proposed by Leith
 #####
 
 """
-    TwoDimensionalLeith{FT} <: AbstractLeith{FT}
+    TwoDimensionalLeith{FT} <: TwoDimensionalLeith{FT}
 
 Parameters for the 2D Leith turbulence closure.
 """
-struct TwoDimensionalLeith{FT, CR, GM} <: AbstractLeith{FT}
+struct TwoDimensionalLeith{FT, CR, GM} <: AbstractEddyViscosityClosure
          C :: FT
     C_Redi :: CR
       C_GM :: GM
@@ -25,11 +27,11 @@ end
 Return a `TwoDimensionalLeith` type associated with the turbulence closure proposed by
 Leith (1965) and Fox-Kemper & Menemenlis (2008) which has an eddy viscosity of the form
 
-    `νₑ = (C * Δᶠ)³ * √(ζ² + (∇h ∂z w)²)`
+    `νₑ = (C * Δᶠ)³ * √(|∇h ζ|² + |∇h ∂z w|²)`
 
 and an eddy diffusivity of the form...
 
-where `Δᶠ` is the filter width, `ζ² = (∂x v - ∂y u)²` is the squared vertical vorticity,
+where `Δᶠ` is the filter width, `ζ = ∂x v - ∂y u` is the vertical vorticity,
 and `C` is a model constant.
 
 Keyword arguments
@@ -49,7 +51,7 @@ Leith, C. E. (1968). "Diffusion Approximation for Two‐Dimensional Turbulence",
 
 Fox‐Kemper, B., & D. Menemenlis (2008), "Can large eddy simulation techniques improve mesoscale rich
     ocean models?", in Ocean Modeling in an Eddying Regime, Geophys. Monogr. Ser., vol. 177, pp. 319–337.
-    doi:10.1029/177GM19
+    doi: 10.1029/177GM19
 
 Pearson, B. et al. (2017) , "Evaluation of scale-aware subgrid mesoscale eddy models in a global eddy
     rich model", Ocean Modelling 115, 42-58. doi: 10.1016/j.ocemod.2017.05.007
@@ -62,7 +64,7 @@ function with_tracers(tracers, closure::TwoDimensionalLeith{FT}) where FT
     return TwoDimensionalLeith{FT}(closure.C, C_Redi, C_GM)
 end
 
-function abs²_∇h_ζ(i, j, k, grid, U)
+@inline function abs²_∇h_ζ(i, j, k, grid, U)
     vxx = ℑyᵃᶜᵃ(i, j, k, grid, ∂²xᶜᵃᵃ, U.v)
     uyy = ℑxᶜᵃᵃ(i, j, k, grid, ∂²yᵃᶜᵃ, U.u)
     uxy = ℑyᵃᶜᵃ(i, j, k, grid, ∂xᶜᵃᵃ, ∂yᵃᶠᵃ, U.u)
@@ -71,10 +73,12 @@ function abs²_∇h_ζ(i, j, k, grid, U)
     return (vxx - uxy)^2 + (vxy - uyy)^2
 end
 
-@inline ψ²(i, j, k, grid, ψ::Function, args...) = ψ(i, j, k, grid, args...)^2
-@inline ψ²(i, j, k, grid, ψ::AbstractArray, args...) = ψ(i, j, k, grid, args...)^2
+const ArrayOrField = Union{AbstractArray, AbstractField}
 
-function abs²_∇h_wz(i, j, k, grid, w)
+@inline ψ²(i, j, k, grid, ψ::Function, args...) = ψ(i, j, k, grid, args...)^2
+@inline ψ²(i, j, k, grid, ψ::ArrayOrField, args...) = ψ[i, j, k]^2
+
+@inline function abs²_∇h_wz(i, j, k, grid, w)
     wxz² = ℑxᶜᵃᵃ(i, j, k, grid, ψ², ∂xᶠᵃᵃ, ∂zᵃᵃᶜ, w)
     wyz² = ℑyᵃᶜᵃ(i, j, k, grid, ψ², ∂yᵃᶠᵃ, ∂zᵃᵃᶜ, w)
     return wxz² + wyz²
@@ -123,13 +127,10 @@ end
 
 # Diffusive fluxes for Leith diffusivities
 
-"""
-    K₁ⱼ_∂ⱼ_c(i, j, k, grid, c, tracer, closure, νₑ)
+@inline function diffusive_flux_x(i, j, k, grid, clock, closure::TwoDimensionalLeith,
+                                  c, ::Val{tracer_index}, diffusivities, C, buoyancy) where tracer_index
 
-Return `K₁₁ ∂x c + K₁₃ ∂z c` for a Leith diffusivity.
-"""
-@inline function K₁ⱼ_∂ⱼ_c(i, j, k, grid, closure::AbstractLeith,
-                          c, ::Val{tracer_index}, νₑ, C, buoyancy) where tracer_index
+    νₑ = diffusivities.νₑ
 
     @inbounds C_Redi = closure.C_Redi[tracer_index]
     @inbounds C_GM = closure.C_GM[tracer_index]
@@ -145,13 +146,10 @@ Return `K₁₁ ∂x c + K₁₃ ∂z c` for a Leith diffusivity.
                     + (C_Redi - C_GM) * R₁₃ * ∂z_c)
 end
 
-"""
-    K₂ⱼ_∂ⱼ_c(i, j, k, grid, c, tracer, closure, νₑ)
+@inline function diffusive_flux_y(i, j, k, grid, clock, closure::TwoDimensionalLeith,
+                                  c, ::Val{tracer_index}, diffusivities, C, buoyancy) where tracer_index
 
-Return `K₂₂ ∂y c + K₂₃ ∂z c` for a Leith diffusivity.
-"""
-@inline function K₂ⱼ_∂ⱼ_c(i, j, k, grid, closure::AbstractLeith,
-                          c, ::Val{tracer_index}, νₑ, C, buoyancy) where tracer_index
+    νₑ = diffusivities.νₑ
 
     @inbounds C_Redi = closure.C_Redi[tracer_index]
     @inbounds C_GM = closure.C_GM[tracer_index]
@@ -166,13 +164,10 @@ Return `K₂₂ ∂y c + K₂₃ ∂z c` for a Leith diffusivity.
                      + (C_Redi - C_GM) * R₂₃ * ∂z_c)
 end
 
-"""
-    K₃ⱼ_∂ⱼ_c(i, j, k, grid, c, tracer, closure, νₑ)
+@inline function diffusive_flux_z(i, j, k, grid, clock, closure::TwoDimensionalLeith,
+                                  c, ::Val{tracer_index}, diffusivities, C, buoyancy) where tracer_index
 
-Return `K₃₁ ∂x c + K₃₂ ∂y c + K₃₃ ∂z c` for a Leith diffusivity.
-"""
-@inline function K₃ⱼ_∂ⱼ_c(i, j, k, grid, closure::AbstractLeith,
-                          c, ::Val{tracer_index}, νₑ, C, buoyancy) where tracer_index
+    νₑ = diffusivities.νₑ
 
     @inbounds C_Redi = closure.C_Redi[tracer_index]
     @inbounds C_GM = closure.C_GM[tracer_index]
@@ -193,23 +188,14 @@ Return `K₃₁ ∂x c + K₃₂ ∂y c + K₃₃ ∂z c` for a Leith diffusivit
                  + C_Redi * R₃₃ * ∂z_c)
 end
 
-"""
-    ∇_κ_∇c(i, j, k, grid, c, closure, diffusivities)
+function calculate_diffusivities!(K, arch, grid, closure::TwoDimensionalLeith, buoyancy, U, C)
+    event = launch!(arch, grid, :xyz, calculate_nonlinear_viscosity!, K.νₑ, grid, closure, buoyancy, U, C,
+                    dependencies=Event(device(arch)))
 
-Return the diffusive flux divergence `∇ ⋅ (κ ∇ c)` for the turbulence
-`closure`, where `c` is an array of scalar data located at cell centers.
-"""
-@inline ∇_κ_∇c(i, j, k, grid, closure::AbstractLeith, c, tracer_index,
-               diffusivities, C, buoyancy) = (
-      ∂xᶜᵃᵃ(i, j, k, grid, K₁ⱼ_∂ⱼ_c, closure, c, tracer_index, diffusivities.νₑ, C, buoyancy)
-    + ∂yᵃᶜᵃ(i, j, k, grid, K₂ⱼ_∂ⱼ_c, closure, c, tracer_index, diffusivities.νₑ, C, buoyancy)
-    + ∂zᵃᵃᶜ(i, j, k, grid, K₃ⱼ_∂ⱼ_c, closure, c, tracer_index, diffusivities.νₑ, C, buoyancy)
-)
+    wait(device(arch), event)
 
-function calculate_diffusivities!(K, arch, grid, closure::AbstractLeith, buoyancy, U, C)
-    @launch(device(arch), config=launch_config(grid, :xyz),
-            calculate_nonlinear_viscosity!(K.νₑ, grid, closure, buoyancy, U, C))
+    return nothing
 end
 
-"Return the filter width for a Leith Diffusivity on a Regular Cartesian grid."
-@inline Δᶠ(i, j, k, grid::RegularCartesianGrid, ::AbstractLeith) = sqrt(grid.Δx * grid.Δy)
+"Return the filter width for a Leith Diffusivity on a regular rectilinear grid."
+@inline Δᶠ(i, j, k, grid::RegularRectilinearGrid, ::TwoDimensionalLeith) = sqrt(grid.Δx * grid.Δy)

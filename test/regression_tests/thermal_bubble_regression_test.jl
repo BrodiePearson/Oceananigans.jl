@@ -1,10 +1,16 @@
-function run_thermal_bubble_regression_test(arch)
+function run_thermal_bubble_regression_test(arch, grid_type)
     Nx, Ny, Nz = 16, 16, 16
     Lx, Ly, Lz = 100, 100, 100
     Δt = 6
 
-    grid = RegularCartesianGrid(size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
-    closure = ConstantIsotropicDiffusivity(ν=4e-2, κ=4e-2)
+    if grid_type == :regular
+        grid = RegularRectilinearGrid(size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
+    elseif grid_type == :vertically_unstretched
+        zF = range(-Lz, 0, length=Nz+1)
+        grid = VerticallyStretchedRectilinearGrid(architecture=arch, size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z_faces=zF)
+    end
+
+    closure = IsotropicDiffusivity(ν=4e-2, κ=4e-2)
     model = IncompressibleModel(architecture=arch, grid=grid, closure=closure, coriolis=FPlane(f=1e-4))
     simulation = Simulation(model, Δt=6, stop_iteration=10)
 
@@ -33,7 +39,7 @@ function run_thermal_bubble_regression_test(arch)
                    "T" => model.tracers.T,
                    "S" => model.tracers.S)
 
-    nc_writer = NetCDFOutputWriter(model, outputs, filename=regression_data_filepath, frequency=10)
+    nc_writer = NetCDFOutputWriter(model, outputs, filename=regression_data_filepath, schedule=IterationInterval(10))
     push!(simulation.output_writers, nc_writer)
     =#
 
@@ -45,29 +51,25 @@ function run_thermal_bubble_regression_test(arch)
 
     ds = Dataset(regression_data_filepath, "r")
 
-    uᶜ = ds["u"][:, :, :, end]
-    vᶜ = ds["v"][:, :, :, end]
-    wᶜ = ds["w"][:, :, :, end]
-    Tᶜ = ds["T"][:, :, :, end]
-    Sᶜ = ds["S"][:, :, :, end]
+    test_fields = (u = Array(interior(model.velocities.u)),
+                   v = Array(interior(model.velocities.v)),
+                   w = Array(interior(model.velocities.w)),
+                   T = Array(interior(model.tracers.T)),
+                   S = Array(interior(model.tracers.S)))
 
-    field_names = ["u", "v", "w", "T", "S"]
+    correct_fields = (u = ds["u"][:, :, :, end],
+                      v = ds["v"][:, :, :, end],
+                      w = ds["w"][:, :, :, end],
+                      T = ds["T"][:, :, :, end],
+                      S = ds["S"][:, :, :, end])
 
-    test_fields = (interior(model.velocities.u), 
-                   interior(model.velocities.v), 
-                   interior(model.velocities.w),
-                   interior(model.tracers.T), 
-                   interior(model.tracers.S))
+    summarize_regression_test(test_fields, correct_fields)
 
-    correct_fields = [uᶜ, vᶜ, wᶜ, Tᶜ, Sᶜ]
-    summarize_regression_test(field_names, test_fields, correct_fields)
-
-    # Now test that the model state matches the regression output.
-    @test all(Array(interior(model.velocities.u)) .≈ uᶜ)
-    @test all(Array(interior(model.velocities.v)) .≈ vᶜ)
-    @test all(Array(interior(model.velocities.w)) .≈ wᶜ)
-    @test all(Array(interior(model.tracers.T))    .≈ Tᶜ)
-    @test all(Array(interior(model.tracers.S))    .≈ Sᶜ)
+    @test all(test_fields.u .≈ correct_fields.u)
+    @test all(test_fields.v .≈ correct_fields.v)
+    @test all(test_fields.w .≈ correct_fields.w)
+    @test all(test_fields.T .≈ correct_fields.T)
+    @test all(test_fields.S .≈ correct_fields.S)
 
     return nothing
 end

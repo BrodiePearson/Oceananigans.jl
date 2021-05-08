@@ -1,6 +1,7 @@
-using Oceananigans.TurbulenceClosures: VerstappenAnisotropicMinimumDissipation
+using Oceananigans.TurbulenceClosures: AnisotropicMinimumDissipation
+using Oceananigans.TimeSteppers: update_state!
 
-function run_ocean_large_eddy_simulation_regression_test(arch, closure)
+function run_ocean_large_eddy_simulation_regression_test(arch, grid_type, closure)
     name = "ocean_large_eddy_simulation_" * string(typeof(closure).name.wrapper)
 
     spinup_steps = 10000
@@ -13,7 +14,13 @@ function run_ocean_large_eddy_simulation_regression_test(arch, closure)
     ∂T∂z = 0.005    # Initial vertical temperature gradient
 
     # Grid
-    grid = RegularCartesianGrid(size=(16, 16, 16), extent=(16, 16, 16))
+    N = L = 16
+    if grid_type == :regular
+        grid = RegularRectilinearGrid(size=(N, N, N), extent=(L, L, L))
+    elseif grid_type == :vertically_unstretched
+        zF = range(-L, 0, length=N+1)
+        grid = VerticallyStretchedRectilinearGrid(architecture=arch, size=(N, N, N), x=(0, L), y=(0, L), z_faces=zF)
+    end
 
     # Boundary conditions
     u_bcs = UVelocityBoundaryConditions(grid, top = BoundaryCondition(Flux, Qᵘ))
@@ -26,7 +33,7 @@ function run_ocean_large_eddy_simulation_regression_test(arch, closure)
              architecture = arch,
                      grid = grid,
                  coriolis = FPlane(f=1e-4),
-                 buoyancy = SeawaterBuoyancy(equation_of_state=LinearEquationOfState(α=2e-4, β=8e-4)),
+                 buoyancy = Buoyancy(model=SeawaterBuoyancy(equation_of_state=LinearEquationOfState(α=2e-4, β=8e-4))),
                   closure = closure,
       boundary_conditions = (u=u_bcs, T=T_bcs, S=S_bcs)
     )
@@ -53,7 +60,7 @@ function run_ocean_large_eddy_simulation_regression_test(arch, closure)
     simulation.stop_iteration = spinup_steps-test_steps
     run!(simulation)
 
-    checkpointer = Checkpointer(model, frequency = test_steps, prefix = name,
+    checkpointer = Checkpointer(model, schedule = IterationInterval(test_steps), prefix = name,
                                 dir = joinpath(dirname(@__FILE__), "data"))
 
     simulation.output_writers[:checkpointer] = checkpointer
@@ -94,35 +101,35 @@ function run_ocean_large_eddy_simulation_regression_test(arch, closure)
     model.clock.time = spinup_steps * Δt
     model.clock.iteration = spinup_steps
 
+    update_state!(model)
+
     for n in 1:test_steps
         time_step!(model, Δt, euler=false)
     end
 
-    final_filename = joinpath(dirname(@__FILE__), "data", name * "_iteration$(spinup_steps+test_steps).jld2")
+    final_filename = joinpath(@__DIR__, "data", name * "_iteration$(spinup_steps+test_steps).jld2")
 
     solution₁, Gⁿ₁, G⁻₁ = get_fields_from_checkpoint(final_filename)
 
-    field_names = ["u", "v", "w", "T", "S"]
+    test_fields = (u = Array(interior(model.velocities.u)),
+                   v = Array(interior(model.velocities.v)),
+                   w = Array(interior(model.velocities.w)[:, :, 1:Nz]),
+                   T = Array(interior(model.tracers.T)),
+                   S = Array(interior(model.tracers.S)))
 
-    test_fields = (model.velocities.u.data.parent, 
-                   model.velocities.v.data.parent,
-                   model.velocities.w.data.parent, 
-                   model.tracers.T.data.parent,
-                   model.tracers.S.data.parent)
+    correct_fields = (u = Array(interior(solution₁.u, model.grid)),
+                      v = Array(interior(solution₁.v, model.grid)),
+                      w = Array(interior(solution₁.w, model.grid)),
+                      T = Array(interior(solution₁.T, model.grid)),
+                      S = Array(interior(solution₁.S, model.grid)))
 
-    correct_fields = (solution₁.u,
-                      solution₁.v, 
-                      solution₁.w,
-                      solution₁.T, 
-                      solution₁.S)
+    summarize_regression_test(test_fields, correct_fields)
 
-    summarize_regression_test(field_names, test_fields, correct_fields)
-
-    @test all(Array(interior(solution₁.u, model.grid)) .≈ Array(interior(model.velocities.u)))
-    @test all(Array(interior(solution₁.v, model.grid)) .≈ Array(interior(model.velocities.v)))
-    @test all(Array(interior(solution₁.w, model.grid)) .≈ Array(interior(model.velocities.w)[:, :, 1:Nz]))
-    @test all(Array(interior(solution₁.T, model.grid)) .≈ Array(interior(model.tracers.T)))
-    @test all(Array(interior(solution₁.S, model.grid)) .≈ Array(interior(model.tracers.S)))
+    @test all(test_fields.u .≈ correct_fields.u)
+    @test all(test_fields.v .≈ correct_fields.v)
+    @test all(test_fields.w .≈ correct_fields.w)
+    @test all(test_fields.T .≈ correct_fields.T)
+    @test all(test_fields.S .≈ correct_fields.S)
 
     return nothing
 end

@@ -1,6 +1,7 @@
 using Oceananigans.Grids: xnode, znode
+using Oceananigans.TimeSteppers: update_state!
 
-function run_rayleigh_benard_regression_test(arch)
+function run_rayleigh_benard_regression_test(arch, grid_type)
 
     #####
     ##### Parameters
@@ -24,11 +25,16 @@ function run_rayleigh_benard_regression_test(arch)
     ##### Model setup
     #####
 
-    grid = RegularCartesianGrid(size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
+    if grid_type == :regular
+        grid = RegularRectilinearGrid(size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
+    elseif grid_type == :vertically_unstretched
+        zF = range(-Lz, 0, length=Nz+1)
+        grid = VerticallyStretchedRectilinearGrid(architecture=arch, size=(Nx, Ny, Nz), x=(0, Lx), y=(0, Ly), z_faces=zF)
+    end
 
     # Force salinity as a passive tracer (βS=0)
     c★(x, z) = exp(4z) * sin(2π/Lx * x)
-    Fc(i, j, k, grid, clock, state) = 1/10 * (c★(xnode(Cell, i, grid), znode(Cell, k, grid)) - state.tracers.c[i, j, k])
+    Fc(i, j, k, grid, clock, model_fields) = 1/10 * (c★(xnode(Center(), i, grid), znode(Center(), k, grid)) - model_fields.c[i, j, k])
 
     bbcs = TracerBoundaryConditions(grid,    top = BoundaryCondition(Value, 0.0),
                                           bottom = BoundaryCondition(Value, Δb))
@@ -36,14 +42,15 @@ function run_rayleigh_benard_regression_test(arch)
     model = IncompressibleModel(
                architecture = arch,
                        grid = grid,
-                    closure = ConstantIsotropicDiffusivity(ν=ν, κ=κ),
+                    closure = IsotropicDiffusivity(ν=ν, κ=κ),
                     tracers = (:b, :c),
-                   buoyancy = BuoyancyTracer(),
+                   buoyancy = Buoyancy(model=BuoyancyTracer()),
         boundary_conditions = (b=bbcs,),
-                    forcing = ModelForcing(c=Fc)
+                    forcing = (c=Forcing(Fc, discrete_form=true),)
     )
 
-    Δt = 0.01 * min(model.grid.Δx, model.grid.Δy, model.grid.Δz)^2 / ν
+    # Lz/Nz will work for both the :regular and :vertically_unstretched grids.
+    Δt = 0.01 * min(model.grid.Δx, model.grid.Δy, Lz/Nz)^2 / ν
 
     # We will manually change the stop_iteration as needed.
     simulation = Simulation(model, Δt=Δt, stop_iteration=0)
@@ -56,7 +63,7 @@ function run_rayleigh_benard_regression_test(arch)
 
     prefix = "rayleigh_benard"
 
-    checkpointer = Checkpointer(model, frequency=test_steps, prefix=prefix,
+    checkpointer = Checkpointer(model, schedule=IterationInterval(test_steps), prefix=prefix,
                                 dir=joinpath(dirname(@__FILE__), "data"))
 
     #####
@@ -110,36 +117,35 @@ function run_rayleigh_benard_regression_test(arch)
     length(simulation.output_writers) > 0 && pop!(simulation.output_writers)
 
     # Step the model forward and perform the regression test
+    update_state!(model)
+
     for n in 1:test_steps
         time_step!(model, Δt, euler=false)
     end
 
-    final_filename = joinpath(dirname(@__FILE__), "data", prefix * "_iteration$(spinup_steps+test_steps).jld2")
+    final_filename = joinpath(@__DIR__, "data", prefix * "_iteration$(spinup_steps+test_steps).jld2")
 
     solution₁, Gⁿ₁, G⁻₁ = get_fields_from_checkpoint(final_filename)
 
-    field_names = ["u", "v", "w", "b", "c"]
+    test_fields = (u = Array(interior(model.velocities.u)),
+                   v = Array(interior(model.velocities.v)),
+                   w = Array(interior(model.velocities.w)[:, :, 1:Nz]),
+                   b = Array(interior(model.tracers.b)),
+                   c = Array(interior(model.tracers.c)))
 
-    test_fields = (model.velocities.u.data.parent, 
-                   model.velocities.v.data.parent,
-                   model.velocities.w.data.parent, 
-                   model.tracers.b.data.parent,
-                   model.tracers.c.data.parent)
+    correct_fields = (u = Array(interior(solution₁.u, model.grid)),
+                      v = Array(interior(solution₁.v, model.grid)),
+                      w = Array(interior(solution₁.w, model.grid)),
+                      b = Array(interior(solution₁.b, model.grid)),
+                      c = Array(interior(solution₁.c, model.grid)))
 
-    correct_fields = (solution₁.u, 
-                      solution₁.v, 
-                      solution₁.w,
-                      solution₁.b, 
-                      solution₁.c)
+    summarize_regression_test(test_fields, correct_fields)
 
-    summarize_regression_test(field_names, test_fields, correct_fields)
-
-    # Now test that the model state matches the regression output.
-    @test all(Array(interior(solution₁.u, model.grid)) .≈ Array(interior(model.velocities.u)))
-    @test all(Array(interior(solution₁.v, model.grid)) .≈ Array(interior(model.velocities.v)))
-    @test all(Array(interior(solution₁.w, model.grid)) .≈ Array(interior(model.velocities.w)[:, :, 1:Nz]))
-    @test all(Array(interior(solution₁.b, model.grid)) .≈ Array(interior(model.tracers.b)))
-    @test all(Array(interior(solution₁.c, model.grid)) .≈ Array(interior(model.tracers.c)))
+    @test all(test_fields.u .≈ correct_fields.u)
+    @test all(test_fields.v .≈ correct_fields.v)
+    @test all(test_fields.w .≈ correct_fields.w)
+    @test all(test_fields.b .≈ correct_fields.b)
+    @test all(test_fields.c .≈ correct_fields.c)
 
     return nothing
 end

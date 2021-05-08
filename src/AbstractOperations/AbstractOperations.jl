@@ -1,62 +1,56 @@
 module AbstractOperations
 
-export ∂x, ∂y, ∂z, @at, Computation, compute!, @unary, @binary, @multiary
+export ∂x, ∂y, ∂z, @at, @unary, @binary, @multiary
 
-import Base: identity
 using Base: @propagate_inbounds
 
 import Adapt
 using CUDA
-using GPUifyLoops: @launch, @loop
-
-using Oceananigans.Architectures: @hascuda
 
 using Oceananigans
-using Oceananigans.Grids
 using Oceananigans.Architectures
-using Oceananigans.Fields
+using Oceananigans.Grids
 using Oceananigans.Operators
 using Oceananigans.BoundaryConditions
+using Oceananigans.Fields
 
+using Oceananigans.Operators: interpolation_operator
 using Oceananigans.Architectures: device
-using Oceananigans.Models: AbstractModel
-using Oceananigans.Diagnostics: HorizontalAverage, normalize_horizontal_sum!
-using Oceananigans.Utils: launch_config
+using Oceananigans: AbstractModel
 
 import Oceananigans.Architectures: architecture
-import Oceananigans.Fields: data
-import Oceananigans.Diagnostics: run_diagnostic
+import Oceananigans.Fields: data, compute_at!
 
 #####
 ##### Basic functionality
 #####
 
-"""
-    AbstractOperation{X, Y, Z, G} <: AbstractField{X, Y, Z, Nothing, G}
-
-Represents an operation performed on grid of type `G` at locations `X`, `Y`, and `Z`.
-"""
-abstract type AbstractOperation{X, Y, Z, G} <: AbstractField{X, Y, Z, Nothing, G} end
+abstract type AbstractOperation{X, Y, Z, A, G, T} <: AbstractField{X, Y, Z, A, G, T} end
 
 const AF = AbstractField
 
-# We (informally) require that all field-like objects define `data` and `parent`:
-data(op::AbstractOperation) = op
+# We (informally) require that all field-like objects define `parent`:
 Base.parent(op::AbstractOperation) = op
 
 # AbstractOperation macros add their associated functions to this list
 const operators = Set()
 
-include("function_fields.jl")
-include("interpolation_utils.jl")
-include("grid_validation.jl")
+"""
+    at(loc, abstract_operation)
 
+Returns `abstract_operation` relocated to `loc`ation.
+"""
+at(loc, f) = f # fallback
+
+include("grid_validation.jl")
+include("grid_metrics.jl")
 include("unary_operations.jl")
 include("binary_operations.jl")
 include("multiary_operations.jl")
 include("derivatives.jl")
-
-include("computations.jl")
+include("kernel_function_operation.jl")
+include("at.jl")
+include("broadcasting_abstract_operations.jl")
 include("show_abstract_operations.jl")
 
 # Make some operators!
@@ -87,3 +81,4 @@ push!(operators, :*)
 push!(multiary_operators, :*)
 
 end # module
+

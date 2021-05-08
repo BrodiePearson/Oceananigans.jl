@@ -1,15 +1,5 @@
-import Oceananigans.Grids: short_show
-
-#####
-##### BoundaryCondition
-#####
-
-Base.show(io::IO, bc::BC{C, T}) where {C, T} =
-    print(io, "BoundaryCondition: type=$C, condition=$(bc.condition)")
-
-#####
-##### FieldBoundaryConditions
-#####
+import Base: show
+import Oceananigans: short_show
 
 bctype_str(::FBC)  = "Flux"
 bctype_str(::PBC)  = "Periodic"
@@ -17,6 +7,28 @@ bctype_str(::NFBC) = "NormalFlow"
 bctype_str(::VBC)  = "Value"
 bctype_str(::GBC)  = "Gradient"
 bctype_str(::ZFBC) = "ZeroFlux"
+bctype_str(::Nothing) = "Nothing"
+
+#####
+##### BoundaryCondition
+#####
+
+print_condition(n::Union{Nothing, Number}) = "$n"
+print_condition(A::AbstractArray) = "$(Base.dims2string(size(A))) $(typeof(A))"
+print_condition(bf::Union{DiscreteBoundaryFunction, ContinuousBoundaryFunction}) = print_condition(bf.func)
+
+function print_condition(f::Function)
+    ms = methods(f).ms
+    length(ms) == 1 && return "$(ms[1])"
+    return "$(ms)"
+end
+
+show(io::IO, bc::BoundaryCondition) =
+    print(io, "BoundaryCondition: type=$(bctype_str(bc)), condition=$(print_condition(bc.condition))")
+
+#####
+##### FieldBoundaryConditions
+#####
 
 short_show(fbcs::FieldBoundaryConditions) =
     string("x=(west=$(bctype_str(fbcs.x.left)), east=$(bctype_str(fbcs.x.right))), ",

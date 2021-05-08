@@ -1,8 +1,10 @@
+using OffsetArrays: OffsetArray
+
 #####
 ##### General halo filling functions
 #####
 
-@inline fill_halo_regions!(::Nothing, args...) = nothing
+fill_halo_regions!(::Nothing, args...) = []
 
 """
     fill_halo_regions!(fields, arch)
@@ -10,64 +12,45 @@
 Fill halo regions for each field in the tuple `fields` according to their boundary
 conditions, possibly recursing into `fields` if it is a nested tuple-of-tuples.
 """
-@inline function fill_halo_regions!(fields::Union{Tuple, NamedTuple}, arch, args...)
+function fill_halo_regions!(fields::Union{Tuple, NamedTuple}, arch, args...)
+
     for field in fields
         fill_halo_regions!(field, arch, args...)
     end
+
     return nothing
 end
 
-@inline fill_halo_regions!(field, arch, args...) =
-    fill_halo_regions!(field.data, field.boundary_conditions, arch, field.grid, args...)
+# Some fields have `nothing` boundary conditions, such as `FunctionField` and `ZeroField`.
+fill_halo_regions!(c::OffsetArray, ::Nothing, args...; kwargs...) = nothing
 
-"Fill halo regions in x, y, and z for a given field."
-@inline function fill_halo_regions!(c::AbstractArray, fieldbcs, arch, args...)
-      fill_west_halo!(c, fieldbcs.x.left,   arch, args...)
-      fill_east_halo!(c, fieldbcs.x.right,  arch, args...)
-     fill_south_halo!(c, fieldbcs.y.left,   arch, args...)
-     fill_north_halo!(c, fieldbcs.y.right,  arch, args...)
-    fill_bottom_halo!(c, fieldbcs.z.bottom, arch, args...)
-       fill_top_halo!(c, fieldbcs.z.top,    arch, args...)
+"Fill halo regions in x, y, and z for a given field's data."
+function fill_halo_regions!(c::OffsetArray, fieldbcs, arch, grid, args...; kwargs...)
+
+    barrier = Event(device(arch))
+
+      west_event =   fill_west_halo!(c, fieldbcs.west,   arch, barrier, grid, args...; kwargs...)
+      east_event =   fill_east_halo!(c, fieldbcs.east,   arch, barrier, grid, args...; kwargs...)
+     south_event =  fill_south_halo!(c, fieldbcs.south,  arch, barrier, grid, args...; kwargs...)
+     north_event =  fill_north_halo!(c, fieldbcs.north,  arch, barrier, grid, args...; kwargs...)
+    bottom_event = fill_bottom_halo!(c, fieldbcs.bottom, arch, barrier, grid, args...; kwargs...)
+       top_event =    fill_top_halo!(c, fieldbcs.top,    arch, barrier, grid, args...; kwargs...)
+
+    # Wait at the end
+    events = [west_event, east_event, south_event, north_event, bottom_event, top_event]
+    events = filter(e -> e isa Event, events)
+    wait(device(arch), MultiEvent(Tuple(events)))
+
     return nothing
 end
 
 #####
-##### Halo filling for flux, periodic, and no-penetration boundary conditions.
+##### Halo-filling for nothing boundary conditions
 #####
 
-# For flux boundary conditions we fill halos as for a *no-flux* boundary condition, and add the
-# flux divergence associated with the flux boundary condition in a separate step. Note that
-# ranges are used to reference the data copied into halos, as this produces views of the correct
-# dimension (eg size = (1, Ny, Nz) for the west halos).
-
-  @inline _fill_west_halo!(c, ::FBC, H, N) = @views @. c.parent[1:H, :, :] = c.parent[1+H:1+H,  :, :]
- @inline _fill_south_halo!(c, ::FBC, H, N) = @views @. c.parent[:, 1:H, :] = c.parent[:, 1+H:1+H,  :]
-@inline _fill_bottom_halo!(c, ::FBC, H, N) = @views @. c.parent[:, :, 1:H] = c.parent[:, :,  1+H:1+H]
-
- @inline _fill_east_halo!(c, ::FBC, H, N) = @views @. c.parent[N+H+1:N+2H, :, :] = c.parent[N+H:N+H, :, :]
-@inline _fill_north_halo!(c, ::FBC, H, N) = @views @. c.parent[:, N+H+1:N+2H, :] = c.parent[:, N+H:N+H, :]
-  @inline _fill_top_halo!(c, ::FBC, H, N) = @views @. c.parent[:, :, N+H+1:N+2H] = c.parent[:, :, N+H:N+H]
-
-# Periodic boundary conditions
-  @inline _fill_west_halo!(c, ::PBC, H, N) = @views @. c.parent[1:H, :, :] = c.parent[N+1:N+H, :, :]
- @inline _fill_south_halo!(c, ::PBC, H, N) = @views @. c.parent[:, 1:H, :] = c.parent[:, N+1:N+H, :]
-@inline _fill_bottom_halo!(c, ::PBC, H, N) = @views @. c.parent[:, :, 1:H] = c.parent[:, :, N+1:N+H]
-
- @inline _fill_east_halo!(c, ::PBC, H, N) = @views @. c.parent[N+H+1:N+2H, :, :] = c.parent[1+H:2H, :, :]
-@inline _fill_north_halo!(c, ::PBC, H, N) = @views @. c.parent[:, N+H+1:N+2H, :] = c.parent[:, 1+H:2H, :]
-  @inline _fill_top_halo!(c, ::PBC, H, N) = @views @. c.parent[:, :, N+H+1:N+2H] = c.parent[:, :, 1+H:2H]
-
-# Generate functions that implement flux and periodic boundary conditions
-sides = (:west, :east, :south, :north, :top, :bottom)
-coords = (:x, :x, :y, :y, :z, :z)
-
-for (x, side) in zip(coords, sides)
-    outername = Symbol(:fill_, side, :_halo!)
-    innername = Symbol(:_fill_, side, :_halo!)
-    H = Symbol(:H, x)
-    N = Symbol(:N, x)
-    @eval begin
-        @inline $outername(c, bc::Union{FBC, PBC}, arch, grid, args...) =
-            $innername(c, bc, grid.$(H), grid.$(N))
-    end
-end
+  fill_west_halo!(c, ::Nothing, args...; kwargs...) = nothing
+  fill_east_halo!(c, ::Nothing, args...; kwargs...) = nothing
+ fill_south_halo!(c, ::Nothing, args...; kwargs...) = nothing
+ fill_north_halo!(c, ::Nothing, args...; kwargs...) = nothing
+   fill_top_halo!(c, ::Nothing, args...; kwargs...) = nothing
+fill_bottom_halo!(c, ::Nothing, args...; kwargs...) = nothing

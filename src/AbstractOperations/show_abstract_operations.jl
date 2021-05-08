@@ -1,4 +1,5 @@
-using Oceananigans.Grids: show_domain, short_show
+import Oceananigans: short_show
+using Oceananigans.Grids: domain_string
 using Oceananigans.Fields: show_location
 
 for op_string in ("UnaryOperation", "BinaryOperation", "MultiaryOperation", "Derivative")
@@ -8,13 +9,25 @@ for op_string in ("UnaryOperation", "BinaryOperation", "MultiaryOperation", "Der
     end
 end
 
+operation_name(op::GridMetricOperation) = string(op.metric)
+
+function show_interp(op)
+    op_str = string(op)
+    if op_str[1:8] == "identity"
+        return "identity"
+    else
+        return op_str
+    end
+end
+
+short_show(operation::AbstractOperation) = string(operation_name(operation), " at ", show_location(operation))
+
 Base.show(io::IO, operation::AbstractOperation) =
     print(io,
-          operation_name(operation), " at ", show_location(operation), '\n',
-          "├── grid: ", typeof(operation.grid), '\n',
-          "│   ├── size: ", size(operation.grid), '\n',
-          "│   └── domain: ", show_domain(operation.grid), '\n',
-          "└── tree: ", "\n"^2, tree_show(operation, 0, 0))
+          short_show(operation), '\n',
+          "├── grid: ", short_show(operation.grid), '\n',
+          "│   └── domain: ", domain_string(operation.grid), '\n',
+          "└── tree: ", "\n", "    ", tree_show(operation, 1, 0))
 
 "Return a representaion of number or function leaf within a tree visualization of an `AbstractOperation`."
 tree_show(a::Union{Number, Function}, depth, nesting) = string(a)
@@ -29,7 +42,7 @@ get_tree_padding(depth, nesting) = "    "^(depth-nesting) * "│   "^nesting
 function tree_show(unary::UnaryOperation{X, Y, Z}, depth, nesting)  where {X, Y, Z}
     padding = get_tree_padding(depth, nesting)
 
-    return string(unary.op, " at ", show_location(X, Y, Z), " via ", unary.▶, '\n',
+    return string(unary.op, " at ", show_location(X, Y, Z), " via ", show_interp(unary.▶), '\n',
                   padding, "└── ", tree_show(unary.arg, depth+1, nesting))
 end
 
@@ -37,7 +50,7 @@ end
 function tree_show(binary::BinaryOperation{X, Y, Z}, depth, nesting) where {X, Y, Z}
     padding = get_tree_padding(depth, nesting)
 
-    return string(binary.op, " at ", show_location(X, Y, Z), " via ", binary.▶op, '\n',
+    return string(binary.op, " at ", show_location(X, Y, Z), '\n',
                   padding, "├── ", tree_show(binary.a, depth+1, nesting+1), '\n',
                   padding, "└── ", tree_show(binary.b, depth+1, nesting))
 end
@@ -57,6 +70,6 @@ end
 function tree_show(deriv::Derivative{X, Y, Z}, depth, nesting)  where {X, Y, Z}
     padding = get_tree_padding(depth, nesting)
 
-    return string(deriv.∂, " at ", show_location(X, Y, Z), " via ", deriv.▶, '\n',
+    return string(deriv.∂, " at ", show_location(X, Y, Z), " via ", show_interp(deriv.▶), '\n',
                   padding, "└── ", tree_show(deriv.arg, depth+1, nesting))
 end

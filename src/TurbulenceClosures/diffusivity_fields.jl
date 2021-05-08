@@ -1,70 +1,81 @@
-# Fallback constructor for diffusivity types without precomputed diffusivities.
-DiffusivityFields(arch::AbstractArchitecture, grid::AbstractGrid, args...) = nothing
+using Oceananigans.Fields: validate_field_tuple_grid
 
-# For a tuple of closures
-DiffusivityFields(
-    arch::AbstractArchitecture, grid::AbstractGrid, tracers,
-    bcs::NamedTuple, closure_tuple::Tuple
-) = Tuple(DiffusivityFields(arch, grid, tracers, bcs, closure) for closure in closure_tuple)
+#####
+##### Forms for IncompressibleModel constructor
+#####
+
+DiffusivityFields(diffusivities::NamedTuple, arch, grid, tracer_names, bcs, closure) =
+    validate_field_tuple_grid("diffusivities", diffusivities, grid)
+
+DiffusivityFields(::Nothing, arch, grid, tracer_names, bcs, closure) =
+    DiffusivityFields(arch, grid, tracer_names, bcs, closure)
+
+#####
+##### Closures without precomputed diffusivities
+#####
+
+DiffusivityFields(arch, grid, tracer_names, bcs, closure) = nothing
+
+#####
+##### Closure tuples
+#####
+
+DiffusivityFields(arch, grid, tracer_names, bcs, closure_tuple::Tuple) =
+    Tuple(DiffusivityFields(arch, grid, tracer_names, bcs, closure) for closure in closure_tuple)
 
 #####
 ##### For closures that only require an eddy viscosity νₑ field.
 #####
 
-const ViscosityClosures = Union{AbstractSmagorinsky, AbstractLeith}
+const ViscosityClosures = Union{SmagorinskyLilly, TwoDimensionalLeith}
 
-DiffusivityFields(
-    arch::AbstractArchitecture, grid::AbstractGrid, tracers, ::ViscosityClosures;
-    νₑ = CellField(arch, grid, DiffusivityBoundaryConditions(grid), zeros(arch, grid))
-) = (νₑ=νₑ,)
+DiffusivityFields(arch, grid, tracer_names, ::ViscosityClosures;
+                  νₑ = CenterField(arch, grid, DiffusivityBoundaryConditions(grid))) = (νₑ=νₑ,)
 
-function DiffusivityFields(arch::AbstractArchitecture, grid::AbstractGrid, tracers,
-                           bcs::NamedTuple, ::ViscosityClosures)
+function DiffusivityFields(arch, grid, tracer_names, bcs, closure::ViscosityClosures)
     νₑ_bcs = :νₑ ∈ keys(bcs) ? bcs[:νₑ] : DiffusivityBoundaryConditions(grid)
-    νₑ = CellField(arch, grid, νₑ_bcs, zeros(arch, grid))
-    return (νₑ=νₑ,)
+    return DiffusivityFields(arch, grid, tracer_names, closure; νₑ = CenterField(arch, grid, νₑ_bcs))
 end
 
 #####
 ##### For closures that also require tracer diffusivity fields κₑ on each tracer.
 #####
 
-const ViscosityDiffusivityClosures = Union{VAMD, RAMD}
+function DiffusivityFields(arch, grid, tracer_names, ::AMD;
+                           νₑ = CenterField(arch, grid, DiffusivityBoundaryConditions(grid)),
+                           kwargs...)
 
-function TracerDiffusivityFields(arch, grid, tracer_names; kwargs...)
-    κ_fields =
-        Tuple(c ∈ keys(kwargs) ?
-              kwargs[c] :
-              CellField(arch, grid, DiffusivityBoundaryConditions(grid), zeros(arch, grid))
-              for c in tracer_names)
-    return NamedTuple{tracer_names}(κ_fields)
-end
+    κₑ = TracerDiffusivityFields(arch, grid, tracer_names; kwargs...)
 
-function TracerDiffusivityFields(arch, grid, tracer_names, bcs::NamedTuple)
-    κ_fields =
-        Tuple(c ∈ keys(bcs) ?
-              CellField(arch, grid, bcs[c],                              zeros(arch, grid)) :
-              CellField(arch, grid, DiffusivityBoundaryConditions(grid), zeros(arch, grid))
-              for c in tracer_names)
-    return NamedTuple{tracer_names}(κ_fields)
-end
-
-function DiffusivityFields(
-    arch::AbstractArchitecture, grid::AbstractGrid, tracers, ::ViscosityDiffusivityClosures;
-    νₑ = CellField(arch, grid, DiffusivityBoundaryConditions(grid), zeros(arch, grid)), kwargs...)
-    κₑ = TracerDiffusivityFields(arch, grid, tracers; kwargs...)
     return (νₑ=νₑ, κₑ=κₑ)
 end
 
-function DiffusivityFields(arch::AbstractArchitecture, grid::AbstractGrid, tracers,
-                           bcs::NamedTuple, ::ViscosityDiffusivityClosures)
+function DiffusivityFields(arch, grid, tracer_names, bcs, ::AMD)
 
     νₑ_bcs = :νₑ ∈ keys(bcs) ? bcs[:νₑ] : DiffusivityBoundaryConditions(grid)
-    νₑ = CellField(arch, grid, νₑ_bcs, zeros(arch, grid))
+    νₑ = CenterField(arch, grid, νₑ_bcs)
 
-    κₑ = :κₑ ∈ keys(bcs) ?
-        TracerDiffusivityFields(arch, grid, tracers, bcs[:κₑ]) :
-        TracerDiffusivityFields(arch, grid, tracers)
+    κₑ = :κₑ ∈ keys(bcs) ? TracerDiffusivityFields(arch, grid, tracer_names, bcs[:κₑ]) :
+                           TracerDiffusivityFields(arch, grid, tracer_names)
 
     return (νₑ=νₑ, κₑ=κₑ)
+end
+
+function TracerDiffusivityFields(arch, grid, tracer_names; kwargs...)
+
+    κ_fields = Tuple(c ∈ keys(kwargs) ?
+                     kwargs[c] :
+                     CenterField(arch, grid, DiffusivityBoundaryConditions(grid))
+                     for c in tracer_names)
+
+    return NamedTuple{tracer_names}(κ_fields)
+end
+
+function TracerDiffusivityFields(arch, grid, tracer_names, bcs)
+
+    κ_fields = Tuple(c ∈ keys(bcs) ? CenterField(arch, grid, bcs[c]) :
+                                     CenterField(arch, grid, DiffusivityBoundaryConditions(grid))
+                     for c in tracer_names)
+
+    return NamedTuple{tracer_names}(κ_fields)
 end
