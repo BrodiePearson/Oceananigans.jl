@@ -2,33 +2,43 @@ module TurbulenceClosures
 
 export
     AbstractEddyViscosityClosure,
-    IsotropicDiffusivity,
-    AnisotropicDiffusivity,
-    AnisotropicBiharmonicDiffusivity,
+    VerticalScalarDiffusivity,
+    HorizontalScalarDiffusivity,
+    HorizontalDivergenceScalarDiffusivity,
+    ScalarDiffusivity,
+    VerticalScalarBiharmonicDiffusivity,
+    HorizontalScalarBiharmonicDiffusivity,
+    HorizontalDivergenceScalarBiharmonicDiffusivity,
+    ScalarBiharmonicDiffusivity,
     TwoDimensionalLeith,
-    ConstantSmagorinsky,
     SmagorinskyLilly,
     AnisotropicMinimumDissipation,
-    HorizontallyCurvilinearAnisotropicDiffusivity,
+    ConvectiveAdjustmentVerticalDiffusivity,
+    RiBasedVerticalDiffusivity,
+    IsopycnalSkewSymmetricDiffusivity,
+    FluxTapering,
+
+    ExplicitTimeDiscretization,
+    VerticallyImplicitTimeDiscretization,
 
     DiffusivityFields,
     calculate_diffusivities!,
 
-    ∇_κ_∇c,
-    ∇_κ_∇T,
-    ∇_κ_∇S,
-    ∂ⱼ_2ν_Σ₁ⱼ,
-    ∂ⱼ_2ν_Σ₂ⱼ,
-    ∂ⱼ_2ν_Σ₃ⱼ,
+    ∇_dot_qᶜ,
+    ∂ⱼ_τ₁ⱼ,
+    ∂ⱼ_τ₂ⱼ,
+    ∂ⱼ_τ₃ⱼ,
 
     cell_diffusion_timescale
 
 using CUDA
 using KernelAbstractions
+using Adapt 
 
-import Oceananigans.Utils: with_tracers
+import Oceananigans.Utils: with_tracers, prettysummary
 
 using Oceananigans
+using Oceananigans.Architectures
 using Oceananigans.Grids
 using Oceananigans.Operators
 using Oceananigans.BoundaryConditions
@@ -38,15 +48,7 @@ using Oceananigans.Utils
 
 using Oceananigans.Architectures: AbstractArchitecture, device
 
-#####
-##### Molecular viscosity and thermal diffusivity definitions
-##### Approximate viscosities and thermal diffusivities for seawater at 20ᵒC and 35 psu,
-##### according to Sharqawy et al., "Thermophysical properties of seawater: A review of
-##### existing correlations and data" (2010).
-#####
-
-const ν₀ = 1.05e-6
-const κ₀ = 1.46e-7
+const VerticallyBoundedGrid{FT} = AbstractGrid{FT, <:Any, <:Any, <:Bounded}
 
 #####
 ##### Abstract types
@@ -57,102 +59,69 @@ const κ₀ = 1.46e-7
 
 Abstract supertype for turbulence closures.
 """
-abstract type AbstractTurbulenceClosure end
+abstract type AbstractTurbulenceClosure{TimeDiscretization} end
 
+# Fallbacks
+validate_closure(closure) = closure
+closure_summary(closure) = summary(closure)
 
-"""
-    AbstractTensorDiffusivity <: AbstractTurbulenceClosure
-
-Abstract supertype for turbulence closures that are defined by a tensor viscosity and
-tensor diffusivities.
-"""
-abstract type AbstractTensorDiffusivity <: AbstractTurbulenceClosure end
+const ClosureKinda = Union{Nothing, AbstractTurbulenceClosure, AbstractArray{<:AbstractTurbulenceClosure}}
+add_closure_specific_boundary_conditions(closure::ClosureKinda, bcs, args...) = bcs
 
 #####
-##### 'Tupled closure' implementation
+##### Tracer indices
 #####
 
-for stress_div in (:∂ⱼ_2ν_Σ₁ⱼ, :∂ⱼ_2ν_Σ₂ⱼ, :∂ⱼ_2ν_Σ₃ⱼ)
-    @eval begin
-        @inline function $stress_div(i, j, k, grid::AbstractGrid{FT}, clock, closure_tuple::Tuple, U,
-                                     K_tuple, args...) where FT
-
-            stress_div_ijk = zero(FT)
-
-            ntuple(Val(length(closure_tuple))) do α
-                @inbounds closure = closure_tuple[α]
-                @inbounds K = K_tuple[α]
-                stress_div_ijk += $stress_div(i, j, k, grid, clock, closure, U, K, args...)
-            end
-
-            return stress_div_ijk
-        end
-    end
-end
-
-@inline function ∇_κ_∇c(i, j, k, grid::AbstractGrid{FT}, clock, closure_tuple::Tuple,
-                        c, tracer_index, K_tuple, args...) where FT
-
-    flux_div_ijk = zero(FT)
-
-    ntuple(Val(length(closure_tuple))) do α
-        @inbounds closure = closure_tuple[α]
-        @inbounds K = K_tuple[α]
-        flux_div_ijk +=  ∇_κ_∇c(i, j, k, grid, clock, closure, c, tracer_index, K, args...)
-    end
-
-    return flux_div_ijk
-end
-
-function calculate_diffusivities!(K_tuple::Tuple, arch, grid, closure_tuple::Tuple, args...)
-    ntuple(Val(length(closure_tuple))) do α
-        @inbounds closure = closure_tuple[α]
-        @inbounds K = K_tuple[α]
-        calculate_diffusivities!(K, arch, grid, closure, args...)
-    end
-
-    return nothing
-end
-
-with_tracers(tracers, closure_tuple::Tuple) =
-    Tuple(with_tracers(tracers, closure) for closure in closure_tuple)
+# For "vanilla" tracers we use `Val(id)`.
+# "Special" tracers need custom types.
 
 #####
-##### Include module code
+##### The magic
 #####
 
+# Closure ensemble util
+@inline getclosure(i, j, closure::AbstractMatrix{<:AbstractTurbulenceClosure}) = @inbounds closure[i, j]
+@inline getclosure(i, j, closure::AbstractVector{<:AbstractTurbulenceClosure}) = @inbounds closure[i]
+@inline getclosure(i, j, closure::AbstractTurbulenceClosure) = closure
+
+include("discrete_diffusion_function.jl")
+include("implicit_explicit_time_discretization.jl")
 include("turbulence_closure_utils.jl")
-include("diffusion_operators.jl")
-include("viscous_dissipation_operators.jl")
+include("closure_kernel_operators.jl")
 include("velocity_tracer_gradients.jl")
-include("abstract_eddy_viscosity_closures.jl")
-
+include("abstract_scalar_diffusivity_closure.jl")
+include("abstract_scalar_biharmonic_diffusivity_closure.jl")
 include("closure_tuples.jl")
+include("isopycnal_rotation_tensor_components.jl")
 
+# Implicit closure terms (diffusion + linear terms)
+include("vertically_implicit_diffusion_solver.jl")
+
+# Implementations:
 include("turbulence_closure_implementations/nothing_closure.jl")
-include("turbulence_closure_implementations/isotropic_diffusivity.jl")
-include("turbulence_closure_implementations/anisotropic_diffusivity.jl")
-include("turbulence_closure_implementations/horizontally_curvilinear_anisotropic_diffusivity.jl")
-include("turbulence_closure_implementations/horizontally_curvilinear_anisotropic_biharmonic_diffusivity.jl")
-include("turbulence_closure_implementations/anisotropic_biharmonic_diffusivity.jl")
 
-# Eddy viscosity closures
-include("turbulence_closure_implementations/leith_enstrophy_diffusivity.jl")
+# AbstractScalarDiffusivity closures:
+include("turbulence_closure_implementations/scalar_diffusivity.jl")
+include("turbulence_closure_implementations/scalar_biharmonic_diffusivity.jl")
 include("turbulence_closure_implementations/smagorinsky_lilly.jl")
 include("turbulence_closure_implementations/anisotropic_minimum_dissipation.jl")
+include("turbulence_closure_implementations/convective_adjustment_vertical_diffusivity.jl")
+include("turbulence_closure_implementations/CATKEVerticalDiffusivities/CATKEVerticalDiffusivities.jl")
+include("turbulence_closure_implementations/ri_based_vertical_diffusivity.jl")
 
+# Special non-abstracted diffusivities:
+# TODO: introduce abstract typing for these
+include("turbulence_closure_implementations/isopycnal_skew_symmetric_diffusivity.jl")
+include("turbulence_closure_implementations/leith_enstrophy_diffusivity.jl")
+
+using .CATKEVerticalDiffusivities: CATKEVerticalDiffusivity
+
+# Miscellaneous utilities
 include("diffusivity_fields.jl")
 include("turbulence_closure_diagnostics.jl")
 
 #####
 ##### Some value judgements here
 #####
-
-"""
-    ConstantSmagorinsky
-
-An alias for `SmagorinskyLilly`.
-"""
-const ConstantSmagorinsky = SmagorinskyLilly
 
 end # module

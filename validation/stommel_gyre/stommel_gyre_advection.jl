@@ -33,22 +33,22 @@ ic_name(::typeof(ϕ_Square))   = "Square"
 function setup_simulation(N, T, CFL, ϕₐ, advection_scheme; u, v)
     topology = (Flat, Bounded, Bounded)
     domain = (x=(0, 1), y=(0, L), z=(0, L))
-    grid = RegularRectilinearGrid(topology=topology, size=(1, N, N), halo=(3, 3, 3); domain...)
+    grid = RectilinearGrid(topology=topology, size=(1, N, N), halo=(3, 3, 3); domain...)
 
-    model = IncompressibleModel(
+    model = NonhydrostaticModel(
                grid = grid,
         timestepper = :RungeKutta3,
           advection = advection_scheme,
             tracers = :c,
            buoyancy = nothing,
-            closure = IsotropicDiffusivity(ν=0, κ=0)
+            closure = ScalarDiffusivity(ν=0, κ=0)
     )
 
     set!(model, v=u, w=v, c=ϕₐ)
 
     v_max = maximum(abs, interior(model.velocities.v))
     w_max = maximum(abs, interior(model.velocities.w))
-    Δt = CFL * min(grid.Δy, grid.Δz) / max(v_max, w_max)
+    Δt = CFL * min(grid.Δyᵃᶜᵃ, grid.Δzᵃᵃᶜ) / max(v_max, w_max)
 
     simulation = Simulation(model, Δt=Δt, stop_time=T, progress=print_progress, iteration_interval=1,
                             parameters = (v_Stommel=u, w_Stommel=v))
@@ -100,7 +100,7 @@ ic_name(::typeof(ϕ_λ_Gaussian)) = ic_name(ϕ_Gaussian)
 ic_name(::typeof(ϕ_λ_Square))   = ic_name(ϕ_Square)
 
 ϕ_λs = (ϕ_λ_Gaussian, ϕ_λ_Square)
-schemes = (CenteredSecondOrder(), CenteredFourthOrder(), WENO5())
+schemes = (CenteredSecondOrder(), CenteredFourthOrder(), WENO())
 Ns = (32, 256)
 CFLs = (0.05,)
 

@@ -53,7 +53,7 @@ end
 # This is easily changed but many of the tests will fail so this situation needs to be 
 # cleaned up.
 function validate_halo(TX, TY, TZ, ::Nothing)
-    halo = Tuple(1 for i = 1:topological_tuple_length(TX, TY, TZ))
+    halo = Tuple(3 for i = 1:topological_tuple_length(TX, TY, TZ))
     return validate_halo(TX, TY, TZ, halo)
 end
 
@@ -65,19 +65,68 @@ end
 
 coordinate_name(i) = i == 1 ? "x" : i == 2 ? "y" : "z"
 
-function validate_dimension_specification(T, ξ, dir)
+function validate_dimension_specification(T, ξ, dir, N, FT)
 
     isnothing(ξ)         && throw(ArgumentError("Must supply extent or $dir keyword when $dir-direction is $T"))
     length(ξ) == 2       || throw(ArgumentError("$dir length($ξ) must be 2."))
     all(isa.(ξ, Number)) || throw(ArgumentError("$dir=$ξ should contain numbers."))
     ξ[2] >= ξ[1]         || throw(ArgumentError("$dir=$ξ should be an increasing interval."))
 
+    return FT.(ξ)
+end
+
+function validate_rectilinear_domain(TX, TY, TZ, FT, size, extent, x, y, z)
+
+    # Find domain endpoints or domain extent, depending on user input:
+    if !isnothing(extent) # the user has specified an extent!
+
+        (!isnothing(x) || !isnothing(y) || !isnothing(z)) &&
+            throw(ArgumentError("Cannot specify both 'extent' and 'x, y, z' keyword arguments."))
+
+        extent = tupleit(extent)
+
+        validate_tupled_argument(extent, Number, "extent", topological_tuple_length(TX, TY, TZ))
+
+        Lx, Ly, Lz = extent = inflate_tuple(TX, TY, TZ, extent, default=0)
+
+        # An "oceanic" default domain:
+        x = FT.((0, Lx))
+        y = FT.((0, Ly))
+        z = FT.((-Lz, 0))
+
+    else # isnothing(extent) === true implies that user has not specified a length
+        x = validate_dimension_specification(TX, x, :x, size[1], FT)
+        y = validate_dimension_specification(TY, y, :y, size[2], FT)
+        z = validate_dimension_specification(TZ, z, :z, size[3], FT)
+    end
+
+    return x, y, z
+end
+
+function validate_dimension_specification(T, ξ::AbstractVector, dir, N, FT)
+    ξ = FT.(ξ)
+
+    # Validate the length of ξ: error is ξ is too short, warn if ξ is too long.
+    Nξ = length(ξ)
+    N⁺¹ = N + 1
+    if Nξ < N⁺¹
+        throw(ArgumentError("length($dir) = $Nξ has too few interfaces for the dimension size $N!"))
+    elseif Nξ > N⁺¹
+        msg = "length($dir) = $Nξ is greater than $N+1, where $N was passed to `size`.\n" *
+              "$dir cell interfaces will be constructed from $dir[1:$N⁺¹]."
+        @warn msg
+    end
+
     return ξ
 end
 
-validate_dimension_specification(::Type{Flat}, ξ::Tuple, dir) = ξ
-validate_dimension_specification(::Type{Flat}, ::Nothing, dir) = (0, 0)
-validate_dimension_specification(::Type{Flat}, ξ::Number, dir) = (ξ, ξ)
+validate_dimension_specification(T, ξ::Function, dir, N, FT) = ξ
+
+validate_dimension_specification(::Type{Flat}, ξ::AbstractVector, dir, N, FT) = (FT(ξ[1]), FT(ξ[1]))
+validate_dimension_specification(::Type{Flat}, ξ::Function,       dir, N, FT) = (FT(ξ(1)), FT(ξ(1)))
+validate_dimension_specification(::Type{Flat}, ξ::Tuple,  dir, N, FT) = FT.(ξ)
+validate_dimension_specification(::Type{Flat}, ::Nothing, dir, N, FT) = (zero(FT), zero(FT))
+validate_dimension_specification(::Type{Flat}, ξ::Number, dir, N, FT) = (FT(ξ), FT(ξ))
 
 default_horizontal_extent(T, extent) = (0, extent[i])
 default_vertical_extent(T, extent) = (-extent[3], 0)
@@ -102,9 +151,9 @@ function validate_regular_grid_domain(TX, TY, TZ, FT, extent, x, y, z)
         z = (-Lz, 0)
 
     else # isnothing(extent) === true implies that user has not specified a length
-        x = validate_dimension_specification(TX, x, :x)
-        y = validate_dimension_specification(TY, y, :y)
-        z = validate_dimension_specification(TZ, z, :z)
+        x = validate_dimension_specification(TX, x, :x, FT)
+        y = validate_dimension_specification(TY, y, :y, FT)
+        z = validate_dimension_specification(TZ, z, :z, FT)
 
         Lx = x[2] - x[1]
         Ly = y[2] - y[1]
@@ -115,11 +164,43 @@ function validate_regular_grid_domain(TX, TY, TZ, FT, extent, x, y, z)
 end
 
 function validate_vertically_stretched_grid_xy(TX, TY, FT, x, y)
-    x = validate_dimension_specification(TX, x, :x)
-    y = validate_dimension_specification(TY, y, :y)
+    x = validate_dimension_specification(TX, x, :x, FT)
+    y = validate_dimension_specification(TY, y, :y, FT)
 
     Lx = x[2] - x[1]
     Ly = y[2] - y[1]
 
     return FT(Lx), FT(Ly), FT.(x), FT.(y)
 end
+
+validate_unit_vector(ê::ZDirection) = ê
+
+function validate_unit_vector(ê)
+    length(ê) == 3 || throw(ArgumentError("unit vector must have length 3"))
+
+    ex, ey, ez = ê
+
+    ex^2 + ey^2 + ez^2 ≈ 1 ||
+        throw(ArgumentError("unit vector `ê` must have ê[1]² + ê[2]² + ê[3]² ≈ 1"))
+
+    return tuple(ê...)
+end
+
+function validate_index(idx, loc, topo, N, H)
+    isinteger(idx) && return validate_index(Int(idx), loc, topo, N, H)
+    return throw(ArgumentError("$idx are not supported window indices for Field!"))
+end
+
+validate_index(::Colon, loc, topo, N, H) = Colon()
+validate_index(idx::UnitRange, ::Type{Nothing}, topo, N, H) = UnitRange(1, 1)
+
+function validate_index(idx::UnitRange, loc, topo, N, H)
+    all_idx = all_indices(loc, topo, N, H)
+    (first(idx) ∈ all_idx && last(idx) ∈ all_idx) || throw(ArgumentError("The indices $idx must slice $I"))
+    return idx
+end
+
+validate_index(idx::Int, args...) = validate_index(UnitRange(idx, idx), args...)
+
+validate_indices(indices, loc, grid::AbstractGrid) =
+    validate_index.(indices, loc, topology(grid), size(loc, grid), halo_size(grid))

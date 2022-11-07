@@ -1,3 +1,5 @@
+include("dependencies_for_runtests.jl")
+
 using Oceananigans.Fields: TracerFields
 
 using Oceananigans.BuoyancyModels:
@@ -6,8 +8,8 @@ using Oceananigans.BuoyancyModels:
     haline_contractionᶜᶜᶜ, haline_contractionᶠᶜᶜ, haline_contractionᶜᶠᶜ, haline_contractionᶜᶜᶠ
 
 function instantiate_linear_equation_of_state(FT, α, β)
-    eos = LinearEquationOfState(FT, α=α, β=β)
-    return eos.α == FT(α) && eos.β == FT(β)
+    eos = LinearEquationOfState(FT, thermal_expansion=α, haline_contraction=β)
+    return eos.thermal_expansion == FT(α) && eos.haline_contraction == FT(β)
 end
 
 function instantiate_seawater_buoyancy(FT, EquationOfState; kwargs...)
@@ -16,50 +18,50 @@ function instantiate_seawater_buoyancy(FT, EquationOfState; kwargs...)
 end
 
 function density_perturbation_works(arch, FT, eos)
-    grid = RegularRectilinearGrid(FT, size=(3, 3, 3), extent=(1, 1, 1))
-    C = datatuple(TracerFields((:T, :S), arch, grid))
-    density_anomaly = ρ′(2, 2, 2, grid, eos, C.T, C.S)
+    grid = RectilinearGrid(arch, FT, size=(3, 3, 3), extent=(1, 1, 1))
+    C = TracerFields((:T, :S), grid)
+    density_anomaly = CUDA.@allowscalar ρ′(2, 2, 2, grid, eos, C.T, C.S)
     return true
 end
 
 function ∂x_b_works(arch, FT, buoyancy)
-    grid = RegularRectilinearGrid(FT, size=(3, 3, 3), extent=(1, 1, 1))
-    C = datatuple(TracerFields(required_tracers(buoyancy), arch, grid))
-    dbdx = ∂x_b(2, 2, 2, grid, buoyancy, C)
+    grid = RectilinearGrid(arch, FT, size=(3, 3, 3), extent=(1, 1, 1))
+    C = TracerFields(required_tracers(buoyancy), grid)
+    dbdx = CUDA.@allowscalar ∂x_b(2, 2, 2, grid, buoyancy, C)
     return true
 end
 
 function ∂y_b_works(arch, FT, buoyancy)
-    grid = RegularRectilinearGrid(FT, size=(3, 3, 3), extent=(1, 1, 1))
-    C = datatuple(TracerFields(required_tracers(buoyancy), arch, grid))
-    dbdy = ∂y_b(2, 2, 2, grid, buoyancy, C)
+    grid = RectilinearGrid(arch, FT, size=(3, 3, 3), extent=(1, 1, 1))
+    C = TracerFields(required_tracers(buoyancy), grid)
+    dbdy = CUDA.@allowscalar ∂y_b(2, 2, 2, grid, buoyancy, C)
     return true
 end
 
 function ∂z_b_works(arch, FT, buoyancy)
-    grid = RegularRectilinearGrid(FT, size=(3, 3, 3), extent=(1, 1, 1))
-    C = datatuple(TracerFields(required_tracers(buoyancy), arch, grid))
-    dbdz = ∂z_b(2, 2, 2, grid, buoyancy, C)
+    grid = RectilinearGrid(arch, FT, size=(3, 3, 3), extent=(1, 1, 1))
+    C = TracerFields(required_tracers(buoyancy), grid)
+    dbdz = CUDA.@allowscalar ∂z_b(2, 2, 2, grid, buoyancy, C)
     return true
 end
 
 function thermal_expansion_works(arch, FT, eos)
-    grid = RegularRectilinearGrid(FT, size=(3, 3, 3), extent=(1, 1, 1))
-    C = datatuple(TracerFields((:T, :S), arch, grid))
-    α = thermal_expansionᶜᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
-    α = thermal_expansionᶠᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
-    α = thermal_expansionᶜᶠᶜ(2, 2, 2, grid, eos, C.T, C.S)
-    α = thermal_expansionᶜᶜᶠ(2, 2, 2, grid, eos, C.T, C.S)
+    grid = RectilinearGrid(arch, FT, size=(3, 3, 3), extent=(1, 1, 1))
+    C = TracerFields((:T, :S), grid)
+    α = CUDA.@allowscalar thermal_expansionᶜᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
+    α = CUDA.@allowscalar thermal_expansionᶠᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
+    α = CUDA.@allowscalar thermal_expansionᶜᶠᶜ(2, 2, 2, grid, eos, C.T, C.S)
+    α = CUDA.@allowscalar thermal_expansionᶜᶜᶠ(2, 2, 2, grid, eos, C.T, C.S)
     return true
 end
 
 function haline_contraction_works(arch, FT, eos)
-    grid = RegularRectilinearGrid(FT, size=(3, 3, 3), extent=(1, 1, 1))
-    C = datatuple(TracerFields((:T, :S), arch, grid))
-    β = haline_contractionᶜᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
-    β = haline_contractionᶠᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
-    β = haline_contractionᶜᶠᶜ(2, 2, 2, grid, eos, C.T, C.S)
-    β = haline_contractionᶜᶜᶠ(2, 2, 2, grid, eos, C.T, C.S)
+    grid = RectilinearGrid(arch, FT, size=(3, 3, 3), extent=(1, 1, 1))
+    C = TracerFields((:T, :S), grid)
+    β = CUDA.@allowscalar haline_contractionᶜᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
+    β = CUDA.@allowscalar haline_contractionᶠᶜᶜ(2, 2, 2, grid, eos, C.T, C.S)
+    β = CUDA.@allowscalar haline_contractionᶜᶠᶜ(2, 2, 2, grid, eos, C.T, C.S)
+    β = CUDA.@allowscalar haline_contractionᶜᶜᶠ(2, 2, 2, grid, eos, C.T, C.S)
     return true
 end
 

@@ -89,7 +89,7 @@ function diagnose_velocities_from_streamfunction(ψ, grid)
     return uᶠᶜᶜ, vᶜᶠᶜ, ψᶠᶠᶜ
 end
 
-function cubed_sphere_rossby_haurwitz(grid_filepath)
+function cubed_sphere_rossby_haurwitz(grid_filepath; check_fields=false)
 
     ## Grid setup
 
@@ -99,9 +99,8 @@ function cubed_sphere_rossby_haurwitz(grid_filepath)
     ## Model setup
 
     model = HydrostaticFreeSurfaceModel(
-              architecture = CPU(),
                       grid = grid,
-        momentum_advection = nothing,
+        momentum_advection = VectorInvariant(),
               free_surface = ExplicitFreeSurface(gravitational_acceleration=100),
                   coriolis = HydrostaticSphericalCoriolis(scheme = VectorInvariantEnstrophyConserving()),
                    closure = nothing,
@@ -155,7 +154,7 @@ function cubed_sphere_rossby_haurwitz(grid_filepath)
 
     # Compute amount of time needed for a 45° rotation.
     angular_velocity = (n * (3+n) * ω - 2Ω) / ((1+n) * (2+n))
-    stop_time = deg2rad(45) / abs(angular_velocity)
+    stop_time = deg2rad(360) / abs(angular_velocity)
     @info "Stop time = $(prettytime(stop_time))"
 
     Δt = 20seconds
@@ -182,22 +181,24 @@ function cubed_sphere_rossby_haurwitz(grid_filepath)
                 parameters = (; cfl)
     )
 
-    fields_to_check = (
-        u = model.velocities.u,
-        v = model.velocities.v,
-        η = model.free_surface.η
-    )
+    if check_fields
+        fields_to_check = (
+            u = model.velocities.u,
+            v = model.velocities.v,
+            η = model.free_surface.η
+        )
 
-    simulation.diagnostics[:state_checker] =
-        StateChecker(model, fields=fields_to_check, schedule=IterationInterval(20))
+        simulation.diagnostics[:state_checker] =
+            StateChecker(model, fields=fields_to_check, schedule=IterationInterval(20))
+    end
 
     output_fields = merge(model.velocities, (η=model.free_surface.η,))
 
     simulation.output_writers[:fields] =
     JLD2OutputWriter(model, output_fields,
-        schedule = TimeInterval(5minutes),
-          prefix = "cubed_sphere_rossby_haurwitz",
-           force = true)
+        schedule = TimeInterval(1hour),
+        filename = "cubed_sphere_rossby_haurwitz",
+        overwrite_existing = true)
 
     run!(simulation)
 
@@ -207,10 +208,9 @@ end
 
 include("animate_on_map_projection.jl")
 
-function run_cubed_sphere_rossby_haurwitz_validation()
+function run_cubed_sphere_rossby_haurwitz_validation(grid_filepath=datadep"cubed_sphere_32_grid/cubed_sphere_32_grid.jld2")
 
-    cubed_sphere_rossby_haurwitz(datadep"cubed_sphere_32_grid/cubed_sphere_32_grid.jld2")
-    # cubed_sphere_rossby_haurwitz(datadep"cubed_sphere_96_grid/cubed_sphere_96_grid.jld2")
+    simulation = cubed_sphere_rossby_haurwitz(grid_filepath)
 
     projections = [
         ccrs.NearsidePerspective(central_longitude=0, central_latitude=30),
@@ -218,4 +218,6 @@ function run_cubed_sphere_rossby_haurwitz_validation()
     ]
 
     animate_rossby_haurwitz(projections=projections)
+
+    return simulation
 end

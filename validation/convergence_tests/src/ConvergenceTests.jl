@@ -20,7 +20,7 @@ using Oceananigans.Fields
 using Oceananigans: Face, Center
 using Oceananigans.Fields: Face, Center, nodes
 
-import Oceananigans: RegularRectilinearGrid
+import Oceananigans: RectilinearGrid
 import Oceananigans.Fields: location
 
 figspath = joinpath(@__DIR__, "..", "figs")
@@ -49,6 +49,31 @@ include("OneDimensionalUtils.jl")
 # Tests x-advection and y-advection.
 #
 include("OneDimensionalGaussianAdvectionDiffusion.jl")
+
+# Advection and diffusion of a 2D Gaussian:
+#
+# c = 1/√(4πκt) * exp( -(x - Ut)^2 / 4κt )
+#
+# Tests xy-advection, yz-advection and xz-advection.
+#
+include("TwoDimensionalGaussianAdvectionDiffusion.jl")
+
+# Advection of an Isoentropic 2D Vortex:
+#
+# 
+#
+# Tests xy-advection for conservative and vector invariant formulation
+#
+include("TwoDimensionalVortexAdvection.jl")
+
+# Advection of an Isoentropic 2D Vortex:
+#
+# 
+#
+# Tests xy-advection for conservative and vector invariant formulation
+#
+include("TwoDimensionalBurgersAdvection.jl")
+
 
 # Advection and diffusion of a 1D cosine:
 #

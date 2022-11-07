@@ -3,18 +3,18 @@
 Velocities ``u``, ``v``, and ``w`` are defined on the faces of the cells, which are coincident with three orthogonal
 coordinate axes (the Cartesian axes in the case of Oceananigans). Pressure ``p`` and tracers ``c`` are stored at
 the cell  centers as cell averages. See schematic below of the different control
-volumes. Other quantities may be defined at other locations. For example, vorticity ``\boldsymbol{\omega} = \boldsymbol{\nabla} \times \boldsymbol{u}``
+volumes. Other quantities may be defined at other locations. For example, vorticity ``\boldsymbol{\omega} = \boldsymbol{\nabla} \times \boldsymbol{v}``
 is defined at the cell edges.[^1]
 
 [^1]: In 2D it would more correct to say the cell corners. In 3D, variables like vorticity lie at the same vertical
     levels as the cell-centered variables and so they really lie at the cell edges.
 
-![Schematic of control volumes](../numerical_implementation/assets/staggered_grid_control_volumes.png)
+![Schematic of control volumes](../numerical_implementation/assets/staggered_grid.png)
 *A schematic of `Oceananigans.jl` finite volumes for a two-dimensional staggered grid in ``(x, z)``.
 Tracers ``c`` and pressure ``p`` are defined at the center of the control volume. The ``u`` control volumes are 
 centered on the left and right edges of the pressure control volume while the ``w`` control volumes are centered 
 on the top and bottom edges of the pressure control volumes. The indexing convention places the ``i^{\rm{th}}`` 
-``u``-node on cell ``x``-faces to the left of the ``i`` tracer point at cell centers. Figure credit: [Kumar16](@cite)*
+``u``-node on cell ``x``-faces to the left of the ``i`` tracer point at cell centers.*
 
 This staggered arrangement of variables is more complicated than the collocated grid arrangement but is greatly
 beneficial as it avoids the odd-even decoupling between the pressure and velocity if they are stored at the same

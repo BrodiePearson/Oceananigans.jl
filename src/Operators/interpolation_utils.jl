@@ -8,8 +8,10 @@ interpolation_code(from, to) = interpolation_code(to)
 
 interpolation_code(::Type{Face}) = :ᶠ
 interpolation_code(::Type{Center}) = :ᶜ
+interpolation_code(::Type{Nothing}) = :ᶜ
 interpolation_code(::Face) = :ᶠ
 interpolation_code(::Center) = :ᶜ
+interpolation_code(::Nothing) = :ᶜ
 
 # Intercept non-interpolations
 interpolation_code(from::L, to::L) where L = :ᵃ
@@ -53,11 +55,12 @@ function interpolation_operator(from, to)
     from, to = instantiate.(from), instantiate.(to)
     x, y, z = (interpolation_code(X, Y) for (X, Y) in zip(from, to))
 
-    # This is crazy, but here's my number...
-    global identity_counter += 1
-    identity = identify_an_identity(identity_counter)
-
     if all(ξ === :ᵃ for ξ in (x, y, z))
+
+        # This is crazy, but here's my number...
+        global identity_counter += 1
+        identity = identify_an_identity(identity_counter)
+
         return @eval $identity
     else
         return eval(Symbol(:ℑ, ℑxsym(x), ℑysym(y), ℑzsym(z), x, y, z))
@@ -103,4 +106,20 @@ function index_and_interp_dependencies(X, Y, Z, dependencies, model_field_names)
     end
 
     return indices, interps
+end
+
+# Adds a interpolate function which takes i, j, k, grid, from, and to as an argument
+for LX in (:Center, :Face), LY in (:Center, :Face), LZ in (:Center, :Face)
+    for IX in (:Center, :Face), IY in (:Center, :Face), IZ in (:Center, :Face)
+        from = (eval(LX), eval(LY), eval(LZ))
+        to   = (eval(IX), eval(IY), eval(IZ))
+        interp_func = Symbol(interpolation_operator(from, to))
+        @eval begin
+            ℑxyz(i, j, k, grid, from::F, to::T, c) where {F<:Tuple{<:$LX, <:$LY, <:$LZ}, T<:Tuple{<:$IX, <:$IY, <:$IZ}} = 
+                $interp_func(i, j, k, grid, c)
+         
+            ℑxyz(i, j, k, grid, from::F, to::T, f, args...) where {F<:Tuple{<:$LX, <:$LY, <:$LZ}, T<:Tuple{<:$IX, <:$IY, <:$IZ}} = 
+                $interp_func(i, j, k, grid, f, args...)
+        end
+    end
 end

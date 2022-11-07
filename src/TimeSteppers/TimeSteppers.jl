@@ -16,21 +16,23 @@ using Oceananigans.LagrangianParticleTracking: update_particle_properties!
 using Oceananigans.Utils: work_layout
 
 """
-    AbstractTimeStepper
+    abstract type AbstractTimeStepper
 
 Abstract supertype for time steppers.
 """
 abstract type AbstractTimeStepper end
 
 """
-    TimeStepper(name, args...)
+    TimeStepper(name::Symbol, args...; kwargs...)
 
-Returns a timestepper with name `name`, instantiated with `args...`.
+Returns a timestepper with name `name`, instantiated with `args...` and `kwargs...`.
 
 Example
 =======
 
+```julia
 julia> stepper = TimeStepper(:QuasiAdamsBashforth2, CPU(), grid, tracernames)
+```
 """
 function TimeStepper(name::Symbol, args...; kwargs...)
     fullname = Symbol(name, :TimeStepper)
@@ -38,13 +40,15 @@ function TimeStepper(name::Symbol, args...; kwargs...)
 end
 
 # Fallback
-TimeStepper(stepper::AbstractTimeStepper, args...) = stepper
+TimeStepper(stepper::AbstractTimeStepper, args...; kwargs...) = stepper
 
 function update_state! end
 function calculate_tendencies! end
 
 calculate_pressure_correction!(model, Δt) = nothing
 pressure_correct_velocities!(model, Δt) = nothing
+
+reset!(timestepper) = nothing
 
 include("clock.jl")
 include("store_tendencies.jl")

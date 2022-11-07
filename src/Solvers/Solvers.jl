@@ -1,10 +1,12 @@
 module Solvers
 
 export
-    BatchedTridiagonalSolver, solve_batched_tridiagonal_system!,
-    FFTBasedPoissonSolver, FourierTridiagonalPoissonSolver, PreconditionedConjugateGradientSolver, PressureSolver,
-    solve_for_pressure!, solve_poisson_equation!
-
+    BatchedTridiagonalSolver, solve!,
+    FFTBasedPoissonSolver,
+    FourierTridiagonalPoissonSolver,
+    PreconditionedConjugateGradientSolver,
+    HeptadiagonalIterativeSolver,
+    MultigridSolver
 
 using Statistics
 using FFTW
@@ -18,6 +20,7 @@ using Oceananigans.Grids
 using Oceananigans.BoundaryConditions
 using Oceananigans.Fields
 
+using Oceananigans: @ifhasamgx, hasamgx
 using Oceananigans.Grids: unpack_grid
 
 """
@@ -39,9 +42,10 @@ include("plan_transforms.jl")
 include("fft_based_poisson_solver.jl")
 include("fourier_tridiagonal_poisson_solver.jl")
 include("preconditioned_conjugate_gradient_solver.jl")
-include("solve_for_pressure.jl")
+include("sparse_approximate_inverse.jl")
+include("matrix_solver_utils.jl")
+include("sparse_preconditioners.jl")
+include("heptadiagonal_iterative_solver.jl")
+include("multigrid_solver.jl")
 
-PressureSolver(arch, grid::RegularRectilinearGrid) = FFTBasedPoissonSolver(arch, grid)
-PressureSolver(arch, grid::VerticallyStretchedRectilinearGrid) = FourierTridiagonalPoissonSolver(arch, grid)
-
-end
+end # module

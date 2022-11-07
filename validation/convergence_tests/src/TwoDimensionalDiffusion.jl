@@ -30,14 +30,13 @@ const DATA_DIR = joinpath(@__DIR__, "..", "data")
 function setup_simulation(; Nx, Δt, stop_iteration, architecture=CPU(), dir=DATA_DIR,
                           topo=(Periodic, Periodic, Bounded), output=false)
 
-    grid = RegularRectilinearGrid(size=(Nx, Nx, 1), x=(0, Lx(topo)), y=(0, Ly(topo)), z=(0, 1), topology=topo)
+    grid = RectilinearGrid(architecture, size=(Nx, Nx, 1), x=(0, Lx(topo)), y=(0, Ly(topo)), z=(0, 1), topology=topo)
 
-    model = IncompressibleModel(architecture = architecture,
-                                        grid = grid,
+    model = NonhydrostaticModel(        grid = grid,
                                     coriolis = nothing,
                                     buoyancy = nothing,
                                      tracers = :c,
-                                     closure = IsotropicDiffusivity(κ=1))
+                                     closure = ScalarDiffusivity(κ=1))
 
     set!(model, c = (x, y, z) -> c(x, y, 0))
 
@@ -45,8 +44,8 @@ function setup_simulation(; Nx, Δt, stop_iteration, architecture=CPU(), dir=DAT
 
     if output
         simulation.output_writers[:fields] =
-            JLD2OutputWriter(model, model.tracers; dir = dir, force = true, field_slicer = nothing,
-                             prefix = @sprintf("%s_%s_diffusion_Nx%d_Δt%.1e", "$(topo[1])", "$(topo[2])", Nx, Δt),
+            JLD2OutputWriter(model, model.tracers; dir = dir, overwrite_existing = true, field_slicer = nothing,
+                             filename = @sprintf("%s_%s_diffusion_Nx%d_Δt%.1e", "$(topo[1])", "$(topo[2])", Nx, Δt),
                              schedule = TimeInterval(stop_iteration * Δt / 10))
     end
 

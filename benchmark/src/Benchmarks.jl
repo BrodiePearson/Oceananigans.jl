@@ -38,6 +38,7 @@ function print_system_info()
     println()
     println(oceananigans_versioninfo())
     println(versioninfo_with_gpu())
+    CUDA.has_cuda_gpu() && println(CUDA.versioninfo())
     println()
     return nothing
 end
@@ -54,6 +55,9 @@ function run_benchmarks(benchmark_fun; kwargs...)
     for (n, case) in enumerate(cases)
         @info "Benchmarking $n/$n_cases: $case..."
         suite[case] = benchmark_fun(case...)
+        GC.gc()
+        GC.gc(true)
+        GC.gc()
     end
     return suite
 end

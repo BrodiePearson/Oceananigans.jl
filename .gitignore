@@ -16,6 +16,7 @@ docs/src/generated
 
 # Model output
 *.dat
+*.data
 *.nc
 *.jld2
 
@@ -25,6 +26,7 @@ docs/src/generated
 
 # Plots
 *.png
+*.svg
 *.gif
 *.mp4
 
@@ -50,3 +52,8 @@ docs/src/generated
 
 # VSCode
 .vscode
+
+# AMGX
+.logamgx
+
+statprof

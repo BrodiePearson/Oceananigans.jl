@@ -2,6 +2,8 @@ using Oceananigans.TimeSteppers: update_state!
 
 import Oceananigans.Fields: set!
 
+using Oceananigans.Utils: @apply_regionally, apply_regionally!
+
 """
     set!(model; kwargs...)
 
@@ -14,7 +16,7 @@ a function with arguments `(x, y, z)`, or any data type for which a
 Example
 =======
 ```julia
-model = HydrostaticFreeSurfaceModel(grid=RegularRectilinearGrid(size=(32, 32, 32), length=(1, 1, 1))
+model = HydrostaticFreeSurfaceModel(grid=RectilinearGrid(size=(32, 32, 32), length=(1, 1, 1))
 
 # Set u to a parabolic function of z, v to random numbers damped
 # at top and bottom, and T to some silly array of half zeros,
@@ -38,9 +40,10 @@ function set!(model::HydrostaticFreeSurfaceModel; kwargs...)
         elseif fldname ∈ propertynames(model.free_surface)
             ϕ = getproperty(model.free_surface, fldname)
         else
-            throw(ArgumentError("name $fldname not found in model.velocities, model.tracers, or model.free_surface."))
+            throw(ArgumentError("name $fldname not found in model.velocities, model.tracers, or model.free_surface"))
         end
-        set!(ϕ, value)
+
+        @apply_regionally set!(ϕ, value)
     end
 
     update_state!(model)

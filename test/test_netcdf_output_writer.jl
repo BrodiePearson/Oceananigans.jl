@@ -1,17 +1,29 @@
+include("dependencies_for_runtests.jl")
+
+using TimesDates: TimeDate
+using Dates: DateTime, Nanosecond, Millisecond
+using TimesDates: TimeDate
+using CUDA
+using NCDatasets
+using Oceananigans: Clock
+
 #####
 ##### NetCDFOutputWriter tests
 #####
 
 function test_DateTime_netcdf_output(arch)
-    grid = RegularRectilinearGrid(size=(1, 1, 1), extent=(1, 1, 1))
+    grid = RectilinearGrid(arch, size=(1, 1, 1), extent=(1, 1, 1))
     clock = Clock(time=DateTime(2021, 1, 1))
-    model = IncompressibleModel(architecture=arch, grid=grid, clock=clock)
+    model = NonhydrostaticModel(; grid, clock, buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
 
     Δt = 5days + 3hours + 44.123seconds
-    simulation = Simulation(model, Δt=Δt, stop_time=DateTime(2021, 2, 1))
+    simulation = Simulation(model; Δt, stop_time=DateTime(2021, 2, 1))
 
     filepath = "test_DateTime.nc"
-    simulation.output_writers[:cal] = NetCDFOutputWriter(model, fields(model), filepath=filepath, schedule=IterationInterval(1))
+    isfile(filepath) && rm(filepath)
+    simulation.output_writers[:cal] = NetCDFOutputWriter(model, fields(model); 
+                                                         filename = filepath,
+                                                         schedule = IterationInterval(1))
 
     run!(simulation)
 
@@ -34,15 +46,18 @@ function test_DateTime_netcdf_output(arch)
 end
 
 function test_TimeDate_netcdf_output(arch)
-    grid = RegularRectilinearGrid(size=(1, 1, 1), extent=(1, 1, 1))
+    grid = RectilinearGrid(arch, size=(1, 1, 1), extent=(1, 1, 1))
     clock = Clock(time=TimeDate(2021, 1, 1))
-    model = IncompressibleModel(architecture=arch, grid=grid, clock=clock)
+    model = NonhydrostaticModel(; grid, clock, buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
 
     Δt = 5days + 3hours + 44.123seconds
     simulation = Simulation(model, Δt=Δt, stop_time=TimeDate(2021, 2, 1))
 
     filepath = "test_TimeDate.nc"
-    simulation.output_writers[:cal] = NetCDFOutputWriter(model, fields(model), filepath=filepath, schedule=IterationInterval(1))
+    isfile(filepath) && rm(filepath)
+    simulation.output_writers[:cal] = NetCDFOutputWriter(model, fields(model); 
+                                                         filename = filepath,
+                                                         schedule = IterationInterval(1))
 
     run!(simulation)
 
@@ -69,9 +84,9 @@ function test_thermal_bubble_netcdf_output(arch)
     Lx, Ly, Lz = 100, 100, 100
 
     topo = (Periodic, Periodic, Bounded)
-    grid = RegularRectilinearGrid(topology=topo, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
-    closure = IsotropicDiffusivity(ν=4e-2, κ=4e-2)
-    model = IncompressibleModel(architecture=arch, grid=grid, closure=closure)
+    grid = RectilinearGrid(arch, topology=topo, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
+    closure = ScalarDiffusivity(ν=4e-2, κ=4e-2)
+    model = NonhydrostaticModel(; grid, closure, buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
     simulation = Simulation(model, Δt=6, stop_iteration=10)
 
     # Add a cube-shaped warm temperature anomaly that takes up the middle 50%
@@ -79,7 +94,7 @@ function test_thermal_bubble_netcdf_output(arch)
     i1, i2 = round(Int, Nx/4), round(Int, 3Nx/4)
     j1, j2 = round(Int, Ny/4), round(Int, 3Ny/4)
     k1, k2 = round(Int, Nz/4), round(Int, 3Nz/4)
-    CUDA.@allowscalar model.tracers.T.data[i1:i2, j1:j2, k1:k2] .+= 0.01
+    view(model.tracers.T, i1:i2, j1:j2, k1:k2) .+= 0.01
 
     outputs = Dict("v" => model.velocities.v,
                    "u" => model.velocities.u,
@@ -88,18 +103,24 @@ function test_thermal_bubble_netcdf_output(arch)
                    "S" => model.tracers.S)
 
     nc_filepath = "test_dump_$(typeof(arch)).nc"
-    nc_writer = NetCDFOutputWriter(model, outputs, filepath=nc_filepath, schedule=IterationInterval(10), verbose=true)
+    isfile(nc_filepath) && rm(nc_filepath)
+    nc_writer = NetCDFOutputWriter(model, outputs, filename=nc_filepath, schedule=IterationInterval(10), verbose=true)
     push!(simulation.output_writers, nc_writer)
 
-    i_slice = 1:2:10
+    i_slice = 1:10
     j_slice = 13
     k_slice = 9:11
-    field_slicer = FieldSlicer(i=i_slice, j=j_slice, k=k_slice)
+    indices = (i_slice, j_slice, k_slice)
     j_slice = j_slice:j_slice  # So we can correctly index with it for later tests.
 
     nc_sliced_filepath = "test_dump_sliced_$(typeof(arch)).nc"
-    nc_sliced_writer = NetCDFOutputWriter(model, outputs, filepath=nc_sliced_filepath, schedule=IterationInterval(10),
-                                          field_slicer=field_slicer, verbose=true)
+    isfile(nc_sliced_filepath) && rm(nc_sliced_filepath)
+    nc_sliced_writer = NetCDFOutputWriter(model, outputs,
+                                          filename = nc_sliced_filepath,
+                                          schedule = IterationInterval(10),
+                                          array_type = Array{Float32},
+                                          indices = indices,
+                                          verbose = true)
 
     push!(simulation.output_writers, nc_sliced_writer)
 
@@ -107,21 +128,21 @@ function test_thermal_bubble_netcdf_output(arch)
 
     ds3 = Dataset(nc_filepath)
 
-    @test haskey(ds3.attrib, "date") && !isnothing(ds3.attrib["date"])
-    @test haskey(ds3.attrib, "Julia") && !isnothing(ds3.attrib["Julia"])
-    @test haskey(ds3.attrib, "Oceananigans") && !isnothing(ds3.attrib["Oceananigans"])
-    @test haskey(ds3.attrib, "schedule") && ds3.attrib["schedule"] == "IterationInterval"
-    @test haskey(ds3.attrib, "interval") && ds3.attrib["interval"] == 10
+    @test haskey(ds3.attrib, "date")                      && !isnothing(ds3.attrib["date"])
+    @test haskey(ds3.attrib, "Julia")                     && !isnothing(ds3.attrib["Julia"])
+    @test haskey(ds3.attrib, "Oceananigans")              && !isnothing(ds3.attrib["Oceananigans"])
+    @test haskey(ds3.attrib, "schedule")                  && ds3.attrib["schedule"] == "IterationInterval"
+    @test haskey(ds3.attrib, "interval")                  && ds3.attrib["interval"] == 10
     @test haskey(ds3.attrib, "output iteration interval") && !isnothing(ds3.attrib["output iteration interval"])
 
     @test eltype(ds3["time"]) == eltype(model.clock.time)
 
-    @test eltype(ds3["xC"]) == Float64
-    @test eltype(ds3["xF"]) == Float64
-    @test eltype(ds3["yC"]) == Float64
-    @test eltype(ds3["yF"]) == Float64
-    @test eltype(ds3["zC"]) == Float64
-    @test eltype(ds3["zF"]) == Float64
+    @test eltype(ds3["xC"]) == Float32
+    @test eltype(ds3["xF"]) == Float32
+    @test eltype(ds3["yC"]) == Float32
+    @test eltype(ds3["yF"]) == Float32
+    @test eltype(ds3["zC"]) == Float32
+    @test eltype(ds3["zF"]) == Float32
 
     @test length(ds3["xC"]) == Nx
     @test length(ds3["yC"]) == Ny
@@ -130,19 +151,19 @@ function test_thermal_bubble_netcdf_output(arch)
     @test length(ds3["yF"]) == Ny
     @test length(ds3["zF"]) == Nz+1  # z is Bounded
 
-    @test ds3["xC"][1] == grid.xC[1]
-    @test ds3["xF"][1] == grid.xF[1]
-    @test ds3["yC"][1] == grid.yC[1]
-    @test ds3["yF"][1] == grid.yF[1]
-    @test ds3["zC"][1] == grid.zC[1]
-    @test ds3["zF"][1] == grid.zF[1]
+    @test ds3["xC"][1] == grid.xᶜᵃᵃ[1]
+    @test ds3["xF"][1] == grid.xᶠᵃᵃ[1]
+    @test ds3["yC"][1] == grid.yᵃᶜᵃ[1]
+    @test ds3["yF"][1] == grid.yᵃᶠᵃ[1]
+    @test ds3["zC"][1] == grid.zᵃᵃᶜ[1]
+    @test ds3["zF"][1] == grid.zᵃᵃᶠ[1]
 
-    @test ds3["xC"][end] == grid.xC[Nx]
-    @test ds3["xF"][end] == grid.xF[Nx]
-    @test ds3["yC"][end] == grid.yC[Ny]
-    @test ds3["yF"][end] == grid.yF[Ny]
-    @test ds3["zC"][end] == grid.zC[Nz]
-    @test ds3["zF"][end] == grid.zF[Nz+1]  # z is Bounded
+    @test ds3["xC"][end] == grid.xᶜᵃᵃ[Nx]
+    @test ds3["xF"][end] == grid.xᶠᵃᵃ[Nx]
+    @test ds3["yC"][end] == grid.yᵃᶜᵃ[Ny]
+    @test ds3["yF"][end] == grid.yᵃᶠᵃ[Ny]
+    @test ds3["zC"][end] == grid.zᵃᵃᶜ[Nz]
+    @test ds3["zF"][end] == grid.zᵃᵃᶠ[Nz+1]  # z is Bounded
 
     @test eltype(ds3["u"]) == Float32
     @test eltype(ds3["v"]) == Float32
@@ -175,12 +196,12 @@ function test_thermal_bubble_netcdf_output(arch)
 
     @test eltype(ds2["time"]) == eltype(model.clock.time)
 
-    @test eltype(ds2["xC"]) == Float64
-    @test eltype(ds2["xF"]) == Float64
-    @test eltype(ds2["yC"]) == Float64
-    @test eltype(ds2["yF"]) == Float64
-    @test eltype(ds2["zC"]) == Float64
-    @test eltype(ds2["zF"]) == Float64
+    @test eltype(ds2["xC"]) == Float32
+    @test eltype(ds2["xF"]) == Float32
+    @test eltype(ds2["yC"]) == Float32
+    @test eltype(ds2["yF"]) == Float32
+    @test eltype(ds2["zC"]) == Float32
+    @test eltype(ds2["zF"]) == Float32
 
     @test length(ds2["xC"]) == length(i_slice)
     @test length(ds2["xF"]) == length(i_slice)
@@ -189,19 +210,19 @@ function test_thermal_bubble_netcdf_output(arch)
     @test length(ds2["zC"]) == length(k_slice)
     @test length(ds2["zF"]) == length(k_slice)
 
-    @test ds2["xC"][1] == grid.xC[i_slice[1]]
-    @test ds2["xF"][1] == grid.xF[i_slice[1]]
-    @test ds2["yC"][1] == grid.yC[j_slice[1]]
-    @test ds2["yF"][1] == grid.yF[j_slice[1]]
-    @test ds2["zC"][1] == grid.zC[k_slice[1]]
-    @test ds2["zF"][1] == grid.zF[k_slice[1]]
+    @test ds2["xC"][1] == grid.xᶜᵃᵃ[i_slice[1]]
+    @test ds2["xF"][1] == grid.xᶠᵃᵃ[i_slice[1]]
+    @test ds2["yC"][1] == grid.yᵃᶜᵃ[j_slice[1]]
+    @test ds2["yF"][1] == grid.yᵃᶠᵃ[j_slice[1]]
+    @test ds2["zC"][1] == grid.zᵃᵃᶜ[k_slice[1]]
+    @test ds2["zF"][1] == grid.zᵃᵃᶠ[k_slice[1]]
 
-    @test ds2["xC"][end] == grid.xC[i_slice[end]]
-    @test ds2["xF"][end] == grid.xF[i_slice[end]]
-    @test ds2["yC"][end] == grid.yC[j_slice[end]]
-    @test ds2["yF"][end] == grid.yF[j_slice[end]]
-    @test ds2["zC"][end] == grid.zC[k_slice[end]]
-    @test ds2["zF"][end] == grid.zF[k_slice[end]]
+    @test ds2["xC"][end] == grid.xᶜᵃᵃ[i_slice[end]]
+    @test ds2["xF"][end] == grid.xᶠᵃᵃ[i_slice[end]]
+    @test ds2["yC"][end] == grid.yᵃᶜᵃ[j_slice[end]]
+    @test ds2["yF"][end] == grid.yᵃᶠᵃ[j_slice[end]]
+    @test ds2["zC"][end] == grid.zᵃᵃᶜ[k_slice[end]]
+    @test ds2["zF"][end] == grid.zᵃᵃᶠ[k_slice[end]]
 
     @test eltype(ds2["u"]) == Float32
     @test eltype(ds2["v"]) == Float32
@@ -234,9 +255,9 @@ function test_thermal_bubble_netcdf_output_with_halos(arch)
     Lx, Ly, Lz = 100, 100, 100
 
     topo = (Periodic, Periodic, Bounded)
-    grid = RegularRectilinearGrid(topology=topo, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
-    closure = IsotropicDiffusivity(ν=4e-2, κ=4e-2)
-    model = IncompressibleModel(architecture=arch, grid=grid, closure=closure)
+    grid = RectilinearGrid(arch, topology=topo, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
+    closure = ScalarDiffusivity(ν=4e-2, κ=4e-2)
+    model = NonhydrostaticModel(; grid, closure, buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
     simulation = Simulation(model, Δt=6, stop_iteration=10)
 
     # Add a cube-shaped warm temperature anomaly that takes up the middle 50%
@@ -244,13 +265,13 @@ function test_thermal_bubble_netcdf_output_with_halos(arch)
     i1, i2 = round(Int, Nx/4), round(Int, 3Nx/4)
     j1, j2 = round(Int, Ny/4), round(Int, 3Ny/4)
     k1, k2 = round(Int, Nz/4), round(Int, 3Nz/4)
-    CUDA.@allowscalar model.tracers.T.data[i1:i2, j1:j2, k1:k2] .+= 0.01
+    view(model.tracers.T, i1:i2, j1:j2, k1:k2) .+= 0.01
 
     nc_filepath = "test_dump_with_halos_$(typeof(arch)).nc"
     nc_writer = NetCDFOutputWriter(model, merge(model.velocities, model.tracers),
-                                   filepath=nc_filepath,
-                                   schedule=IterationInterval(10),
-                                   field_slicer=FieldSlicer(with_halos=true))
+                                   filename = nc_filepath,
+                                   schedule = IterationInterval(10),
+                                   with_halos = true)
 
     push!(simulation.output_writers, nc_writer)
 
@@ -267,12 +288,12 @@ function test_thermal_bubble_netcdf_output_with_halos(arch)
 
     @test eltype(ds["time"]) == eltype(model.clock.time)
 
-    @test eltype(ds["xC"]) == Float64
-    @test eltype(ds["xF"]) == Float64
-    @test eltype(ds["yC"]) == Float64
-    @test eltype(ds["yF"]) == Float64
-    @test eltype(ds["zC"]) == Float64
-    @test eltype(ds["zF"]) == Float64
+    @test eltype(ds["xC"]) == Float32
+    @test eltype(ds["xF"]) == Float32
+    @test eltype(ds["yC"]) == Float32
+    @test eltype(ds["yF"]) == Float32
+    @test eltype(ds["zC"]) == Float32
+    @test eltype(ds["zF"]) == Float32
 
     Hx, Hy, Hz = grid.Hx, grid.Hy, grid.Hz
     @test length(ds["xC"]) == Nx+2Hx
@@ -282,19 +303,19 @@ function test_thermal_bubble_netcdf_output_with_halos(arch)
     @test length(ds["yF"]) == Ny+2Hy
     @test length(ds["zF"]) == Nz+2Hz+1  # z is Bounded
 
-    @test ds["xC"][1] == grid.xC[1-Hx]
-    @test ds["xF"][1] == grid.xF[1-Hx]
-    @test ds["yC"][1] == grid.yC[1-Hy]
-    @test ds["yF"][1] == grid.yF[1-Hy]
-    @test ds["zC"][1] == grid.zC[1-Hz]
-    @test ds["zF"][1] == grid.zF[1-Hz]
+    @test ds["xC"][1] == grid.xᶜᵃᵃ[1-Hx]
+    @test ds["xF"][1] == grid.xᶠᵃᵃ[1-Hx]
+    @test ds["yC"][1] == grid.yᵃᶜᵃ[1-Hy]
+    @test ds["yF"][1] == grid.yᵃᶠᵃ[1-Hy]
+    @test ds["zC"][1] == grid.zᵃᵃᶜ[1-Hz]
+    @test ds["zF"][1] == grid.zᵃᵃᶠ[1-Hz]
 
-    @test ds["xC"][end] == grid.xC[Nx+Hx]
-    @test ds["xF"][end] == grid.xF[Nx+Hx]
-    @test ds["yC"][end] == grid.yC[Ny+Hy]
-    @test ds["yF"][end] == grid.yF[Ny+Hy]
-    @test ds["zC"][end] == grid.zC[Nz+Hz]
-    @test ds["zF"][end] == grid.zF[Nz+Hz+1]  # z is Bounded
+    @test ds["xC"][end] == grid.xᶜᵃᵃ[Nx+Hx]
+    @test ds["xF"][end] == grid.xᶠᵃᵃ[Nx+Hx]
+    @test ds["yC"][end] == grid.yᵃᶜᵃ[Ny+Hy]
+    @test ds["yF"][end] == grid.yᵃᶠᵃ[Ny+Hy]
+    @test ds["zC"][end] == grid.zᵃᵃᶜ[Nz+Hz]
+    @test ds["zF"][end] == grid.zᵃᵃᶠ[Nz+Hz+1]  # z is Bounded
 
     @test eltype(ds["u"]) == Float32
     @test eltype(ds["v"]) == Float32
@@ -327,8 +348,10 @@ function test_netcdf_function_output(arch)
     Δt = 1.25
     iters = 3
 
-    grid = RegularRectilinearGrid(size=(N, N, N), extent=(L, 2L, 3L))
-    model = IncompressibleModel(architecture=arch, grid=grid)
+    grid = RectilinearGrid(arch, size=(N, N, N), extent=(L, 2L, 3L))
+    model = NonhydrostaticModel(grid=grid,
+                                buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
+
     simulation = Simulation(model, Δt=Δt, stop_iteration=iters)
     grid = model.grid
 
@@ -354,7 +377,7 @@ function test_netcdf_function_output(arch)
     nc_filepath = "test_function_outputs_$(typeof(arch)).nc"
 
     simulation.output_writers[:food] =
-        NetCDFOutputWriter(model, outputs; filepath=nc_filepath,
+        NetCDFOutputWriter(model, outputs; filename=nc_filepath,
                            schedule=TimeInterval(Δt), dimensions=dims, array_type=Array{Float64}, verbose=true,
                            global_attributes=global_attributes, output_attributes=output_attributes)
 
@@ -385,19 +408,19 @@ function test_netcdf_function_output(arch)
     @test length(ds["yF"]) == N
     @test length(ds["zF"]) == N+1  # z is Bounded
 
-    @test ds["xC"][1] == grid.xC[1]
-    @test ds["xF"][1] == grid.xF[1]
-    @test ds["yC"][1] == grid.yC[1]
-    @test ds["yF"][1] == grid.yF[1]
-    @test ds["zC"][1] == grid.zC[1]
-    @test ds["zF"][1] == grid.zF[1]
+    @test ds["xC"][1] == grid.xᶜᵃᵃ[1]
+    @test ds["xF"][1] == grid.xᶠᵃᵃ[1]
+    @test ds["yC"][1] == grid.yᵃᶜᵃ[1]
+    @test ds["yF"][1] == grid.yᵃᶠᵃ[1]
+    @test ds["zC"][1] == grid.zᵃᵃᶜ[1]
+    @test ds["zF"][1] == grid.zᵃᵃᶠ[1]
 
-    @test ds["xC"][end] == grid.xC[N]
-    @test ds["yC"][end] == grid.yC[N]
-    @test ds["zC"][end] == grid.zC[N]
-    @test ds["xF"][end] == grid.xF[N]
-    @test ds["yF"][end] == grid.yF[N]
-    @test ds["zF"][end] == grid.zF[N+1]  # z is Bounded
+    @test ds["xC"][end] == grid.xᶜᵃᵃ[N]
+    @test ds["yC"][end] == grid.yᵃᶜᵃ[N]
+    @test ds["zC"][end] == grid.zᵃᵃᶜ[N]
+    @test ds["xF"][end] == grid.xᶠᵃᵃ[N]
+    @test ds["yF"][end] == grid.yᵃᶠᵃ[N]
+    @test ds["zF"][end] == grid.zᵃᵃᶠ[N+1]  # z is Bounded
 
     @test ds.attrib["location"] == "Bay of Fundy"
     @test ds.attrib["onions"] == 7
@@ -444,7 +467,7 @@ function test_netcdf_function_output(arch)
     simulation = Simulation(model, Δt=Δt, stop_iteration=iters)
 
     simulation.output_writers[:food] =
-        NetCDFOutputWriter(model, outputs; filepath=nc_filepath, mode="a",
+        NetCDFOutputWriter(model, outputs; filename=nc_filepath, overwrite_existing=false,
                            schedule=IterationInterval(1), array_type=Array{Float64}, dimensions=dims, verbose=true,
                            global_attributes=global_attributes, output_attributes=output_attributes)
 
@@ -476,50 +499,75 @@ end
 function test_netcdf_time_averaging(arch)
     topo = (Periodic, Periodic, Periodic)
     domain = (x=(0, 1), y=(0, 1), z=(0, 1))
-    grid = RegularRectilinearGrid(topology=topo, size=(4, 4, 4); domain...)
+    grid = RectilinearGrid(topology=topo, size=(4, 4, 4); domain...)
 
-    λ(x, y, z) = x + (1 - y)^2 + tanh(z)
-    Fc(x, y, z, t, c) = - λ(x, y, z) * c
+    λ1(x, y, z) = x + (1 - y)^2 + tanh(z)
+    λ2(x, y, z) = x + (1 - y)^2 + tanh(4z)
 
-    c_forcing = Forcing(Fc, field_dependencies=(:c,))
+    Fc1(x, y, z, t, c1) = - λ1(x, y, z) * c1
+    Fc2(x, y, z, t, c2) = - λ2(x, y, z) * c2
+    
+    c1_forcing = Forcing(Fc1, field_dependencies=:c1)
+    c2_forcing = Forcing(Fc2, field_dependencies=:c2)
 
-    model = IncompressibleModel(
+    model = NonhydrostaticModel(
                 grid = grid,
-        architecture = arch,
          timestepper = :RungeKutta3,
-             tracers = :c,
-             forcing = (c=c_forcing,),
+             tracers = (:c1, :c2),
+             forcing = (c1=c1_forcing, c2=c2_forcing),
             coriolis = nothing,
             buoyancy = nothing,
              closure = nothing
     )
 
-    set!(model, c=1)
+    set!(model, c1=1, c2=1)
 
-    Δt = 1/512  # Nice floating-point number
+    Δt = 1/64 # Nice floating-point number
     simulation = Simulation(model, Δt=Δt, stop_time=50Δt)
 
-    ∫c_dxdy = AveragedField(model.tracers.c, dims=(1, 2))
-
-    nc_outputs = Dict("c" => ∫c_dxdy)
-    nc_dimensions = Dict("c" => ("zC",))
+    ∫c1_dxdy = Field(Average(model.tracers.c1, dims=(1, 2)))
+    ∫c2_dxdy = Field(Average(model.tracers.c2, dims=(1, 2)))
+        
+    nc_outputs = Dict("c1" => ∫c1_dxdy, "c2" => ∫c2_dxdy)
+    nc_dimensions = Dict("c1" => ("zC",), "c2" => ("zC",))
 
     horizontal_average_nc_filepath = "decay_averaged_field_test.nc"
-    simulation.output_writers[:horizontal_average] =
-        NetCDFOutputWriter(model, nc_outputs, filepath=horizontal_average_nc_filepath, schedule=TimeInterval(10Δt),
-                           dimensions=nc_dimensions, array_type=Array{Float64}, verbose=true)
 
-    time_average_nc_filepath = "decay_windowed_time_average_test.nc"
+    simulation.output_writers[:horizontal_average] =
+        NetCDFOutputWriter(model, nc_outputs,
+                           array_type = Array{Float64},
+                           verbose = true,
+                           filename = horizontal_average_nc_filepath,
+                           schedule = TimeInterval(10Δt),
+                           dimensions = nc_dimensions)
+
+    multiple_time_average_nc_filepath = "decay_windowed_time_average_test.nc"
+    single_time_average_nc_filepath = "single_decay_windowed_time_average_test.nc"
     window = 6Δt
     stride = 2
-    simulation.output_writers[:time_average] =
-        NetCDFOutputWriter(model, nc_outputs, filepath=time_average_nc_filepath, array_type=Array{Float64},
-                           schedule=AveragedTimeInterval(10Δt, window=window, stride=stride),
-                           dimensions=nc_dimensions, verbose=true)
+
+    single_nc_output = Dict("c1" => ∫c1_dxdy)
+    single_nc_dimension = Dict("c1" => ("zC",))
+
+    simulation.output_writers[:single_output_time_average] =
+        NetCDFOutputWriter(model, single_nc_output,
+                           array_type = Array{Float64},
+                           verbose = true,
+                           filename = single_time_average_nc_filepath,
+                           schedule = AveragedTimeInterval(10Δt, window = window, stride = stride),
+                           dimensions = single_nc_dimension)
+
+    simulation.output_writers[:multiple_output_time_average] =
+        NetCDFOutputWriter(model, nc_outputs,
+                           array_type = Array{Float64},
+                           verbose = true,
+                           filename = multiple_time_average_nc_filepath,
+                           schedule = AveragedTimeInterval(10Δt, window = window, stride = stride),
+                           dimensions = nc_dimensions)
 
     run!(simulation)
 
-    ##### Horizontal average should evaluate to
+    ##### For each λ, horizontal average should evaluate to
     #####
     #####     c̄(z, t) = ∫₀¹ ∫₀¹ exp{- λ(x, y, z) * t} dx dy
     #####             = 1 / (Nx*Ny) * Σᵢ₌₁ᴺˣ Σⱼ₌₁ᴺʸ exp{- λ(i, j, k) * t}
@@ -529,59 +577,86 @@ function test_netcdf_time_averaging(arch)
     ds = NCDataset(horizontal_average_nc_filepath)
 
     Nx, Ny, Nz = size(grid)
-    xs, ys, zs = nodes(model.tracers.c)
+    xs, ys, zs = nodes(model.tracers.c1)
 
-    c̄(z, t) = 1 / (Nx * Ny) * sum(exp(-λ(x, y, z) * t) for x in xs for y in ys)
+    c̄1(z, t) = 1 / (Nx * Ny) * sum(exp(-λ1(x, y, z) * t) for x in xs for y in ys)
+    c̄2(z, t) = 1 / (Nx * Ny) * sum(exp(-λ2(x, y, z) * t) for x in xs for y in ys)
+
+    rtol = 1e-5 # need custom rtol for isapprox because roundoff errors accumulate (?)
 
     for (n, t) in enumerate(ds["time"])
-        @test ds["c"][:, n] ≈ c̄.(zs, t)
+        @test all(isapprox.(ds["c1"][:, n], c̄1.(zs, t), rtol=rtol))
+        @test all(isapprox.(ds["c2"][:, n], c̄2.(zs, t), rtol=rtol))
     end
 
     close(ds)
 
+    # Compute time averages...
+    c̄1(ts) = 1/length(ts) * sum(c̄1.(zs, t) for t in ts)
+    c̄2(ts) = 1/length(ts) * sum(c̄2.(zs, t) for t in ts)
+
     #####
     ##### Test strided windowed time average against analytic solution
+    ##### for *single* NetCDF output
     #####
-
-    ds = NCDataset(time_average_nc_filepath)
+    
+    single_ds = NCDataset(single_time_average_nc_filepath)
 
     attribute_names = ("schedule", "interval", "output time interval",
                        "time_averaging_window", "time averaging window",
                        "time_averaging_stride", "time averaging stride")
 
     for name in attribute_names
-        @test haskey(ds.attrib, name) && !isnothing(ds.attrib[name])
+        @test haskey(single_ds.attrib, name) && !isnothing(single_ds.attrib[name])
     end
 
-    c̄(ts) = 1/length(ts) * sum(c̄.(zs, t) for t in ts)
-
     window_size = Int(window/Δt)
+
+    @info "    Testing time-averaging of a single NetCDF output [$(typeof(arch))]..."
+
+    for (n, t) in enumerate(single_ds["time"][2:end])
+        averaging_times = [t - n*Δt for n in 0:stride:window_size-1 if t - n*Δt >= 0]
+        @test all(isapprox.(single_ds["c1"][:, n+1], c̄1(averaging_times), rtol=rtol, atol=rtol))
+    end
+
+    close(single_ds)
+
+    #####
+    ##### Test strided windowed time average against analytic solution
+    ##### for *multiple* NetCDF outputs
+    #####
+
+    ds = NCDataset(multiple_time_average_nc_filepath)
+
+    @info "    Testing time-averaging of multiple NetCDF outputs [$(typeof(arch))]..."
+
     for (n, t) in enumerate(ds["time"][2:end])
-        averaging_times = [t - n*Δt for n in 0:stride:window_size-1]
-        @test ds["c"][:, n+1] ≈ c̄(averaging_times)
+        averaging_times = [t - n*Δt for n in 0:stride:window_size-1 if t - n*Δt >= 0]
+        @test all(isapprox.(ds["c2"][:, n+1], c̄2(averaging_times), rtol=rtol))
     end
 
     close(ds)
 
     rm(horizontal_average_nc_filepath)
-    rm(time_average_nc_filepath)
+    rm(multiple_time_average_nc_filepath)
 
     return nothing
 end
 
 function test_netcdf_output_alignment(arch)
-    grid = RegularRectilinearGrid(size=(1, 1, 1), extent=(1, 1, 1))
-    model = IncompressibleModel(architecture=arch, grid=grid)
+    grid = RectilinearGrid(size=(1, 1, 1), extent=(1, 1, 1))
+    model = NonhydrostaticModel(grid=grid,
+                                buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
     simulation = Simulation(model, Δt=0.2, stop_time=40)
 
     test_filename1 = "test_output_alignment1.nc"
     simulation.output_writers[:stuff] =
-        NetCDFOutputWriter(model, model.velocities, filepath=test_filename1,
+        NetCDFOutputWriter(model, model.velocities, filename=test_filename1,
                            schedule=TimeInterval(7.3))
 
     test_filename2 = "test_output_alignment2.nc"
     simulation.output_writers[:something] =
-        NetCDFOutputWriter(model, model.tracers, filepath=test_filename2,
+        NetCDFOutputWriter(model, model.tracers, filename=test_filename2,
                            schedule=TimeInterval(3.0))
 
     run!(simulation)
@@ -604,9 +679,10 @@ function test_netcdf_vertically_stretched_grid_output(arch)
     Nx = Ny = 8
     Nz = 16
     zF = [k^2 for k in 0:Nz]
-    grid = VerticallyStretchedRectilinearGrid(architecture=arch, size=(Nx, Ny, Nz), x=(0, 1), y=(-π, π), z_faces=zF)
+    grid = RectilinearGrid(arch; size=(Nx, Ny, Nz), x=(0, 1), y=(-π, π), z=zF)
 
-    model = IncompressibleModel(architecture=arch, grid=grid)
+    model = NonhydrostaticModel(grid=grid,
+                                buoyancy=SeawaterBuoyancy(), tracers=(:T, :S))
 
     Δt = 1.25
     iters = 3
@@ -616,7 +692,7 @@ function test_netcdf_vertically_stretched_grid_output(arch)
 
     simulation.output_writers[:fields] =
         NetCDFOutputWriter(model, merge(model.velocities, model.tracers),
-                             filepath = nc_filepath,
+                             filename = nc_filepath,
                              schedule = IterationInterval(1),
                            array_type = Array{Float64},
                               verbose = true)
@@ -637,15 +713,17 @@ function test_netcdf_vertically_stretched_grid_output(arch)
     @test ds["xF"][1] == grid.xᶠᵃᵃ[1]
     @test ds["yC"][1] == grid.yᵃᶜᵃ[1]
     @test ds["yF"][1] == grid.yᵃᶠᵃ[1]
-    @test ds["zC"][1] == grid.zᵃᵃᶜ[1]
-    @test ds["zF"][1] == grid.zᵃᵃᶠ[1]
+
+    @test CUDA.@allowscalar ds["zC"][1] == grid.zᵃᵃᶜ[1]
+    @test CUDA.@allowscalar ds["zF"][1] == grid.zᵃᵃᶠ[1]
 
     @test ds["xC"][end] == grid.xᶜᵃᵃ[Nx]
     @test ds["xF"][end] == grid.xᶠᵃᵃ[Nx]
     @test ds["yC"][end] == grid.yᵃᶜᵃ[Ny]
     @test ds["yF"][end] == grid.yᵃᶠᵃ[Ny]
-    @test ds["zC"][end] == grid.zᵃᵃᶜ[Nz]
-    @test ds["zF"][end] == grid.zᵃᵃᶠ[Nz+1]  # z is Bounded
+
+    @test CUDA.@allowscalar  ds["zC"][end] == grid.zᵃᵃᶜ[Nz]
+    @test CUDA.@allowscalar  ds["zF"][end] == grid.zᵃᵃᶠ[Nz+1]  # z is Bounded
 
     close(ds)
     rm(nc_filepath)
@@ -657,8 +735,8 @@ using Oceananigans.Models.HydrostaticFreeSurfaceModels: VectorInvariant
 
 function test_netcdf_regular_lat_lon_grid_output(arch)
     Nx = Ny = Nz = 16
-    grid = RegularLatitudeLongitudeGrid(size=(Nx, Ny, Nz), longitude=(-180, 180), latitude=(-80, 80), z=(-100, 0))
-    model = HydrostaticFreeSurfaceModel(architecture=arch, momentum_advection = VectorInvariant(), grid=grid)
+    grid = LatitudeLongitudeGrid(arch; size=(Nx, Ny, Nz), longitude=(-180, 180), latitude=(-80, 80), z=(-100, 0))
+    model = HydrostaticFreeSurfaceModel(momentum_advection = VectorInvariant(), grid=grid)
 
     Δt = 1.25
     iters = 3
@@ -668,7 +746,7 @@ function test_netcdf_regular_lat_lon_grid_output(arch)
 
     simulation.output_writers[:fields] =
         NetCDFOutputWriter(model, merge(model.velocities, model.tracers),
-                             filepath = nc_filepath,
+                             filename = nc_filepath,
                              schedule = IterationInterval(1),
                            array_type = Array{Float64},
                               verbose = true)

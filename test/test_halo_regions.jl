@@ -2,8 +2,8 @@ function halo_regions_initalized_correctly(arch, FT, Nx, Ny, Nz)
     # Just choose something anisotropic to catch Δx/Δy type errors.
     Lx, Ly, Lz = 10, 20, 30
 
-    grid = RegularRectilinearGrid(FT, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
-    field = CenterField(arch, grid)
+    grid = RectilinearGrid(arch, FT, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz), halo=(1, 1, 1))
+    field = CenterField(grid)
 
     # Fill the interior with random numbers.
     set!(field, rand(FT, Nx, Ny, Nz))
@@ -11,32 +11,33 @@ function halo_regions_initalized_correctly(arch, FT, Nx, Ny, Nz)
     Hx, Hy, Hz = grid.Hx, grid.Hy, grid.Hz
 
     # The halo regions should still just contain zeros.
-    (all(field.data[1-Hx:0,          :,          :] .== 0) &&
-     all(field.data[Nx+1:Nx+Hx,      :,          :] .== 0) &&
-     all(field.data[:,          1-Hy:0,          :] .== 0) &&
-     all(field.data[:,      Ny+1:Ny+Hy,          :] .== 0) &&
-     all(field.data[:,               :,     1-Hz:0] .== 0) &&
-     all(field.data[:,               :, Nz+1:Nz+Hz] .== 0))
+    return CUDA.@allowscalar (all(field.data[1-Hx:0,          :,          :] .== 0) &&
+                              all(field.data[Nx+1:Nx+Hx,      :,          :] .== 0) &&
+                              all(field.data[:,          1-Hy:0,          :] .== 0) &&
+                              all(field.data[:,      Ny+1:Ny+Hy,          :] .== 0) &&
+                              all(field.data[:,               :,     1-Hz:0] .== 0) &&
+                              all(field.data[:,               :, Nz+1:Nz+Hz] .== 0))
 end
 
 function halo_regions_correctly_filled(arch, FT, Nx, Ny, Nz)
     # Just choose something anisotropic to catch Δx/Δy type errors.
     Lx, Ly, Lz = 100, 200, 300
 
-    grid = RegularRectilinearGrid(FT, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz), 
-                                  topology=(Periodic, Periodic, Bounded))
-    field = CenterField(arch, grid)
+    grid = RectilinearGrid(arch, FT, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz), 
+                           halo=(1, 1, 1), topology=(Periodic, Periodic, Bounded))
+
+    field = CenterField(grid)
 
     set!(field, rand(FT, Nx, Ny, Nz))
-    fill_halo_regions!(field, arch)
+    fill_halo_regions!(field)
 
     Hx, Hy, Hz = grid.Hx, grid.Hy, grid.Hz
     data = field.data
 
-    (all(data[1-Hx:0,   1:Ny,       1:Nz] .== data[Nx-Hx+1:Nx, 1:Ny,       1:Nz]) &&
-     all(data[1:Nx,   1-Hy:0,       1:Nz] .== data[1:Nx,      Ny-Hy+1:Ny,  1:Nz]) &&
-     all(data[1:Nx,     1:Ny,       0:0] .== data[1:Nx,        1:Ny,       1:1]) &&
-     all(data[1:Nx,     1:Ny, Nz+1:Nz+1] .== data[1:Nx,        1:Ny,     Nz:Nz]))
+    return CUDA.@allowscalar (all(data[1-Hx:0,   1:Ny,       1:Nz] .== data[Nx-Hx+1:Nx, 1:Ny,       1:Nz]) &&
+                              all(data[1:Nx,   1-Hy:0,       1:Nz] .== data[1:Nx,      Ny-Hy+1:Ny,  1:Nz]) &&
+                              all(data[1:Nx,     1:Ny,       0:0 ] .== data[1:Nx,        1:Ny,      1:1 ]) &&
+                              all(data[1:Nx,     1:Ny,  Nz+1:Nz+1] .== data[1:Nx,        1:Ny,     Nz:Nz]))
 end
 
 @testset "Halo regions" begin

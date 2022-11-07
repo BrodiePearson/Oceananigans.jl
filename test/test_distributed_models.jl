@@ -1,7 +1,32 @@
+include("dependencies_for_runtests.jl")
+
 using MPI
 
+# # Distributed model tests
+#
+# These tests are meant to be run on 4 ranks. This script may be run
+# stand-alone (outside the test environment) via
+#
+# mpiexec -n 4 julia --project test_distributed_models.jl
+#
+# provided that a few packages (like TimesDates.jl) are in your global environment.
+#
+# Another possibility is to use tmpi ():
+#
+# tmpi 4 julia --project
+#
+# then later:
+# 
+# julia> include("test_distributed_models.jl")
+#
+# When running the tests this way, uncomment the following line
+
+#MPI.Init()
+
+# to initialize MPI.
+
 using Oceananigans.BoundaryConditions: fill_halo_regions!
-using Oceananigans.Distributed: index2rank, east_halo, west_halo, north_halo, south_halo, top_halo, bottom_halo
+using Oceananigans.Distributed: MultiArch, index2rank, east_halo, west_halo, north_halo, south_halo, top_halo, bottom_halo
 
 # Right now just testing with 4 ranks!
 comm = MPI.COMM_WORLD
@@ -14,8 +39,7 @@ mpi_ranks = MPI.Comm_size(comm)
 
 function test_triply_periodic_rank_connectivity_with_411_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(4, 1, 1))
+    arch = MultiArch(CPU(), ranks=(4, 1, 1), topology = topo)
 
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
     @test local_rank == index2rank(arch.local_index..., arch.ranks...)
@@ -51,8 +75,7 @@ end
 
 function test_triply_periodic_rank_connectivity_with_141_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(1, 4, 1))
+    arch = MultiArch(CPU(), ranks=(1, 4, 1), topology = topo)
 
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
     @test local_rank == index2rank(arch.local_index..., arch.ranks...)
@@ -94,8 +117,7 @@ end
 
 function test_triply_periodic_rank_connectivity_with_114_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(1, 1, 4))
+    arch = MultiArch(CPU(), ranks=(1, 1, 4), topology = topo)
 
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
     @test local_rank == index2rank(arch.local_index..., arch.ranks...)
@@ -140,8 +162,7 @@ end
 
 function test_triply_periodic_rank_connectivity_with_221_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(2, 2, 1))
+    arch = MultiArch(CPU(), ranks=(2, 2, 1), topology = topo)
 
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
     @test local_rank == index2rank(arch.local_index..., arch.ranks...)
@@ -189,80 +210,72 @@ end
 
 function test_triply_periodic_local_grid_with_411_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(4, 1, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(CPU(), ranks=(4, 1, 1), topology = topo)
+    local_grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
 
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
-    local_grid = model.grid
     nx, ny, nz = size(local_grid)
 
-    @test local_grid.xF[1] == 0.25*local_rank
-    @test local_grid.xF[nx+1] == 0.25*(local_rank+1)
-    @test local_grid.yF[1] == 0
-    @test local_grid.yF[ny+1] == 2
-    @test local_grid.zF[1] == -3
-    @test local_grid.zF[nz+1] == 0
+    @test local_grid.xᶠᵃᵃ[1] == 0.25*local_rank
+    @test local_grid.xᶠᵃᵃ[nx+1] == 0.25*(local_rank+1)
+    @test local_grid.yᵃᶠᵃ[1] == 0
+    @test local_grid.yᵃᶠᵃ[ny+1] == 2
+    @test local_grid.zᵃᵃᶠ[1] == -3
+    @test local_grid.zᵃᵃᶠ[nz+1] == 0
 
     return nothing
 end
 
 function test_triply_periodic_local_grid_with_141_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(1, 4, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(CPU(), ranks=(1, 4, 1), topology = topo)
+    local_grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
 
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
-    local_grid = model.grid
     nx, ny, nz = size(local_grid)
 
-    @test local_grid.xF[1] == 0
-    @test local_grid.xF[nx+1] == 1
-    @test local_grid.yF[1] == 0.5*local_rank
-    @test local_grid.yF[ny+1] == 0.5*(local_rank+1)
-    @test local_grid.zF[1] == -3
-    @test local_grid.zF[nz+1] == 0
+    @test local_grid.xᶠᵃᵃ[1] == 0
+    @test local_grid.xᶠᵃᵃ[nx+1] == 1
+    @test local_grid.yᵃᶠᵃ[1] == 0.5*local_rank
+    @test local_grid.yᵃᶠᵃ[ny+1] == 0.5*(local_rank+1)
+    @test local_grid.zᵃᵃᶠ[1] == -3
+    @test local_grid.zᵃᵃᶠ[nz+1] == 0
 
     return nothing
 end
 
 function test_triply_periodic_local_grid_with_114_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(1, 1, 4))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
-
+    arch = MultiArch(CPU(), ranks=(1, 1, 4), topology = topo)
+    local_grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+    
     local_rank = MPI.Comm_rank(MPI.COMM_WORLD)
-    local_grid = model.grid
     nx, ny, nz = size(local_grid)
 
-    @test local_grid.xF[1] == 0
-    @test local_grid.xF[nx+1] == 1
-    @test local_grid.yF[1] == 0
-    @test local_grid.yF[ny+1] == 2
-    @test local_grid.zF[1] == -3 + 0.75*local_rank
-    @test local_grid.zF[nz+1] == -3 + 0.75*(local_rank+1)
+    @test local_grid.xᶠᵃᵃ[1] == 0
+    @test local_grid.xᶠᵃᵃ[nx+1] == 1
+    @test local_grid.yᵃᶠᵃ[1] == 0
+    @test local_grid.yᵃᶠᵃ[ny+1] == 2
+    @test local_grid.zᵃᵃᶠ[1] == -3 + 0.75*local_rank
+    @test local_grid.zᵃᵃᶠ[nz+1] == -3 + 0.75*(local_rank+1)
 
     return nothing
 end
 
 function test_triply_periodic_local_grid_with_221_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(2, 2, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
-
+    arch = MultiArch(CPU(), ranks=(2, 2, 1), topology = topo)
+    local_grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+    
     i, j, k = arch.local_index
-    local_grid = model.grid
     nx, ny, nz = size(local_grid)
 
-    @test local_grid.xF[1] == 0.5*(i-1)
-    @test local_grid.xF[nx+1] == 0.5*i
-    @test local_grid.yF[1] == j-1
-    @test local_grid.yF[ny+1] == j
-    @test local_grid.zF[1] == -3
-    @test local_grid.zF[nz+1] == 0
+    @test local_grid.xᶠᵃᵃ[1] == 0.5*(i-1)
+    @test local_grid.xᶠᵃᵃ[nx+1] == 0.5*i
+    @test local_grid.yᵃᶠᵃ[1] == j-1
+    @test local_grid.yᵃᶠᵃ[ny+1] == j
+    @test local_grid.zᵃᵃᶠ[1] == -3
+    @test local_grid.zᵃᵃᶠ[nz+1] == 0
 
     return nothing
 end
@@ -270,14 +283,16 @@ end
 #####
 ##### Injection of halo communication BCs
 #####
+##### TODO: use Field constructor for these tests rather than NonhydrostaticModel.
+#####
 
 function test_triply_periodic_bc_injection_with_411_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(4, 1, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(4, 1, 1), topology=topo)
+    grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         fbcs = field.boundary_conditions
         @test fbcs.east isa HaloCommunicationBC
         @test fbcs.west isa HaloCommunicationBC
@@ -290,11 +305,11 @@ end
 
 function test_triply_periodic_bc_injection_with_141_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(1, 4, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(1, 4, 1))
+    grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         fbcs = field.boundary_conditions
         @test !isa(fbcs.east, HaloCommunicationBC)
         @test !isa(fbcs.west, HaloCommunicationBC)
@@ -307,11 +322,11 @@ end
 
 function test_triply_periodic_bc_injection_with_114_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(1, 1, 4))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(1, 1, 4))
+    grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         fbcs = field.boundary_conditions
         @test !isa(fbcs.east, HaloCommunicationBC)
         @test !isa(fbcs.west, HaloCommunicationBC)
@@ -324,11 +339,11 @@ end
 
 function test_triply_periodic_bc_injection_with_221_ranks()
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-    arch = MultiCPU(grid=full_grid, ranks=(2, 2, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(2, 2, 1))
+    grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         fbcs = field.boundary_conditions
         @test fbcs.east isa HaloCommunicationBC
         @test fbcs.west isa HaloCommunicationBC
@@ -345,13 +360,13 @@ end
 
 function test_triply_periodic_halo_communication_with_411_ranks(halo)
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(16, 6, 4), extent=(1, 2, 3), halo=halo)
-    arch = MultiCPU(grid=full_grid, ranks=(4, 1, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(4, 1, 1))
+    grid = RectilinearGrid(arch, topology=topo, size=(16, 6, 4), extent=(1, 2, 3), halo=halo)
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         interior(field) .= arch.local_rank
-        fill_halo_regions!(field, arch)
+        fill_halo_regions!(field)
 
         @test all(east_halo(field, include_corners=false) .== arch.connectivity.east)
         @test all(west_halo(field, include_corners=false) .== arch.connectivity.west)
@@ -361,20 +376,21 @@ function test_triply_periodic_halo_communication_with_411_ranks(halo)
         @test all(south_halo(field, include_corners=false) .== arch.local_rank)
         @test all(top_halo(field, include_corners=false) .== arch.local_rank)
         @test all(bottom_halo(field, include_corners=false) .== arch.local_rank)
-    end
+end
+
 
     return nothing
 end
 
 function test_triply_periodic_halo_communication_with_141_ranks(halo)
-    topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(4, 16, 4), extent=(1, 2, 3), halo=halo)
-    arch = MultiCPU(grid=full_grid, ranks=(1, 4, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    topo  = (Periodic, Periodic, Periodic)
+    arch  = MultiArch(ranks=(1, 4, 1))
+    grid  = RectilinearGrid(arch, topology=topo, size=(4, 16, 4), extent=(1, 2, 3), halo=halo)
+    model = NonhydrostaticModel(grid=grid)
 
     for field in merge(fields(model), model.pressures)
         interior(field) .= arch.local_rank
-        fill_halo_regions!(field, arch)
+        fill_halo_regions!(field)
 
         @test all(north_halo(field, include_corners=false) .== arch.connectivity.north)
         @test all(south_halo(field, include_corners=false) .== arch.connectivity.south)
@@ -391,13 +407,13 @@ end
 
 function test_triply_periodic_halo_communication_with_114_ranks(halo)
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(4, 4, 16), extent=(1, 2, 3), halo=halo)
-    arch = MultiCPU(grid=full_grid, ranks=(1, 1, 4))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(1, 1, 4))
+    grid = RectilinearGrid(arch, topology=topo, size=(4, 4, 16), extent=(1, 2, 3), halo=halo)
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         interior(field) .= arch.local_rank
-        fill_halo_regions!(field, arch)
+        fill_halo_regions!(field)
 
         @test all(top_halo(field, include_corners=false) .== arch.connectivity.top)
         @test all(bottom_halo(field, include_corners=false) .== arch.connectivity.bottom)
@@ -414,13 +430,13 @@ end
 
 function test_triply_periodic_halo_communication_with_221_ranks(halo)
     topo = (Periodic, Periodic, Periodic)
-    full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 3), extent=(1, 2, 3), halo=halo)
-    arch = MultiCPU(grid=full_grid, ranks=(2, 2, 1))
-    model = DistributedIncompressibleModel(architecture=arch, grid=full_grid, pressure_solver=nothing)
+    arch = MultiArch(ranks=(2, 2, 1))
+    grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 3), extent=(1, 2, 3), halo=halo)
+    model = NonhydrostaticModel(grid=grid)
 
-    for field in merge(fields(model), model.pressures)
+    for field in merge(fields(model))
         interior(field) .= arch.local_rank
-        fill_halo_regions!(field, arch)
+        fill_halo_regions!(field)
 
         @test all(east_halo(field, include_corners=false) .== arch.connectivity.east)
         @test all(west_halo(field, include_corners=false) .== arch.connectivity.west)
@@ -443,6 +459,10 @@ end
 
     @info "Testing distributed MPI Oceananigans..."
 
+    # We don't support distributing _anything_ in the vertical,
+    # so these tests are commented out below (and maybe should be removed
+    # in the future).
+
     @testset "Multi architectures rank connectivity" begin
         @info "  Testing multi architecture rank connectivity..."
         test_triply_periodic_rank_connectivity_with_411_ranks()
@@ -455,7 +475,7 @@ end
         @info "  Testing local grids for distributed models..."
         test_triply_periodic_local_grid_with_411_ranks()
         test_triply_periodic_local_grid_with_141_ranks()
-        test_triply_periodic_local_grid_with_114_ranks()
+        # test_triply_periodic_local_grid_with_114_ranks()
         test_triply_periodic_local_grid_with_221_ranks()
     end
 
@@ -463,7 +483,7 @@ end
         @info "  Testing injection of halo communication BCs..."
         test_triply_periodic_bc_injection_with_411_ranks()
         test_triply_periodic_bc_injection_with_141_ranks()
-        test_triply_periodic_bc_injection_with_114_ranks()
+        # test_triply_periodic_bc_injection_with_114_ranks()
         test_triply_periodic_bc_injection_with_221_ranks()
     end
 
@@ -472,34 +492,37 @@ end
         for H in 1:3
             test_triply_periodic_halo_communication_with_411_ranks((H, H, H))
             test_triply_periodic_halo_communication_with_141_ranks((H, H, H))
-            test_triply_periodic_halo_communication_with_114_ranks((H, H, H))
+            # test_triply_periodic_halo_communication_with_114_ranks((H, H, H))
             test_triply_periodic_halo_communication_with_221_ranks((H, H, H))
         end
     end
 
-    @testset "Time stepping IncompressibleModel" begin
-        topo = (Periodic, Periodic, Periodic)
-        full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
-        arch = MultiCPU(grid=full_grid, ranks=(1, 4, 1))
-        model = DistributedIncompressibleModel(architecture=arch, grid=full_grid)
+    @testset "Time stepping NonhydrostaticModel" begin
+        for ranks in [(1, 4, 1), (2, 2, 1), (4, 1, 1)]
+            @info "Time-stepping a distributed NonhydrostaticModel with ranks $ranks..."
+            topo = (Periodic, Periodic, Periodic)
+            arch = MultiArch(; ranks)
+            grid = RectilinearGrid(arch, topology=topo, size=(8, 8, 8), extent=(1, 2, 3))
+            model = NonhydrostaticModel(; grid)
 
-        time_step!(model, 1)
-        @test model isa IncompressibleModel
-        @test model.clock.time ≈ 1
+            time_step!(model, 1)
+            @test model isa NonhydrostaticModel
+            @test model.clock.time ≈ 1
 
-        simulation = Simulation(model, Δt=1, stop_iteration=2)
-        run!(simulation)
-        @test model isa IncompressibleModel
-        @test model.clock.time ≈ 2
+            simulation = Simulation(model, Δt=1, stop_iteration=2)
+            run!(simulation)
+            @test model isa NonhydrostaticModel
+            @test model.clock.time ≈ 2
+        end
     end
 
     @testset "Time stepping ShallowWaterModel" begin
-        topo = (Periodic, Periodic, Bounded)
-        full_grid = RegularRectilinearGrid(topology=topo, size=(8, 8, 1), extent=(1, 2, 3))
-        arch = MultiCPU(grid=full_grid, ranks=(1, 4, 1))
-        model = DistributedShallowWaterModel(architecture=arch, grid=full_grid, gravitational_acceleration=1)
+        topo = (Periodic, Periodic, Flat)
+        arch = MultiArch(ranks=(1, 4, 1), topology = topo)
+        grid = RectilinearGrid(arch, topology=topo, size=(8, 8), extent=(1, 2), halo=(3, 3))
+        model = ShallowWaterModel(; momentum_advection=nothing, mass_advection=nothing, tracer_advection=nothing, grid, gravitational_acceleration=1)
 
-        set!(model, h=model.grid.Lz)
+        set!(model, h=1)
         time_step!(model, 1)
         @test model isa ShallowWaterModel
         @test model.clock.time ≈ 1

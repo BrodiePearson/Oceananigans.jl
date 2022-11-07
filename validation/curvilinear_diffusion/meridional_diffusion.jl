@@ -2,7 +2,7 @@
 
 using Oceananigans
 lines!(cax, c, ϕ, color = :black)
-using Oceananigans.TurbulenceClosures: HorizontallyCurvilinearAnisotropicDiffusivity
+using Oceananigans.TurbulenceClosures: Horizontal
 using Oceananigans.Models.HydrostaticFreeSurfaceModels: HydrostaticFreeSurfaceModel, VectorInvariant
 
 using Statistics
@@ -15,18 +15,17 @@ include(joinpath(@__DIR__, "..", "solid_body_rotation", "hydrostatic_prescribed_
 Ny = 320
 
 # A spherical domain
-grid = RegularLatitudeLongitudeGrid(size = (1, Ny, 1),
-                                    radius = 1,
-                                    latitude = (-80, 80),
-                                    longitude = (-180, 180),
-                                    z = (-1, 0))
+grid = LatitudeLongitudeGrid(size = (1, Ny, 1),
+                             radius = 1,
+                             latitude = (-80, 80),
+                             longitude = (-180, 180),
+                             z = (-1, 0))
 
 model = HydrostaticFreeSurfaceModel(grid = grid,
-                                    architecture = CPU(),
                                     momentum_advection = VectorInvariant(),
                                     tracers = :c,
                                     coriolis = nothing,
-                                    closure = HorizontallyCurvilinearAnisotropicDiffusivity(κh=1, νh=1),
+                                    closure = HorizontalScalarDiffusivity(κ=1, ν=1),
                                     buoyancy = nothing)
 
 # Tracer patch for visualization
@@ -68,8 +67,8 @@ output_prefix = "meridional_diffusion_Ny$(grid.Ny)"
 
 simulation.output_writers[:fields] = JLD2OutputWriter(model, output_fields,
                                                       schedule = TimeInterval(cell_diffusion_time_scale),
-                                                      prefix = output_prefix,
-                                                      force = true)
+                                                      filename = output_prefix,
+                                                      overwrite_existing = true)
 
 run!(simulation)
 

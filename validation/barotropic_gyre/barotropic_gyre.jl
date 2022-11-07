@@ -3,10 +3,11 @@
 using Oceananigans
 using Oceananigans.Grids
 
-using Oceananigans.Coriolis:
-    HydrostaticSphericalCoriolis,
-    VectorInvariantEnergyConserving,
-    VectorInvariantEnstrophyConserving
+using Oceananigans.Coriolis: HydrostaticSphericalCoriolis
+
+using Oceananigans.Advection:
+    EnergyConservingScheme,
+    EnstrophyConservingScheme
 
 using Oceananigans.Models.HydrostaticFreeSurfaceModels:
     HydrostaticFreeSurfaceModel,
@@ -14,9 +15,11 @@ using Oceananigans.Models.HydrostaticFreeSurfaceModels:
     ExplicitFreeSurface,
     ImplicitFreeSurface
 
-using Oceananigans.TurbulenceClosures: HorizontallyCurvilinearAnisotropicDiffusivity
+
 using Oceananigans.Utils: prettytime, hours, day, days, years
 using Oceananigans.OutputWriters: JLD2OutputWriter, TimeInterval, IterationInterval
+
+using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBoundary, GridFittedBottom
 
 using Statistics
 using JLD2
@@ -26,57 +29,57 @@ Nx = 60
 Ny = 60
 
 # A spherical domain
-grid = RegularLatitudeLongitudeGrid(size = (Nx, Ny, 1),
-                                    longitude = (-30, 30),
-                                    latitude = (15, 75),
-                                    z = (-4000, 0))
+underlying_grid = LatitudeLongitudeGrid(size = (Nx, Ny, 1),
+                                        longitude = (-30, 30),
+                                        latitude = (15, 75),
+                                        z = (-4000, 0))
 
-#free_surface = ImplicitFreeSurface(gravitational_acceleration=0.1)
-free_surface = ExplicitFreeSurface(gravitational_acceleration=0.1)
+## bathymetry = zeros(Nx, Ny) .- 4000
+## view(bathymetry, 31:34, 43:47) .= 0
+## bathymetry = arch_array(arch, bathymetry)
+## grid = ImmersedBoundaryGrid(underlying_grid, GridFittedBottom(bathymetry) )
+grid = underlying_grid
 
-coriolis = HydrostaticSphericalCoriolis(scheme = VectorInvariantEnstrophyConserving())
+free_surface = ImplicitFreeSurface(gravitational_acceleration=0.1)
+# free_surface = ExplicitFreeSurface(gravitational_acceleration=0.1)
+
+coriolis = HydrostaticSphericalCoriolis(scheme = EnstrophyConservingScheme())
 
 @show surface_wind_stress_parameters = (τ₀ = 1e-4,
                                         Lφ = grid.Ly,
                                         φ₀ = 15)
 
-surface_wind_stress(λ, φ, t, p) = p.τ₀ * cos(2π * (φ - p.φ₀) / p.Lφ)
+@inline surface_wind_stress(λ, φ, t, p) = p.τ₀ * cos(2π * (φ - p.φ₀) / p.Lφ)
 
-surface_wind_stress_bc = BoundaryCondition(Flux,
-                                           surface_wind_stress,
-                                           parameters = surface_wind_stress_parameters)
+surface_wind_stress_bc = FluxBoundaryCondition(surface_wind_stress,
+                                               parameters = surface_wind_stress_parameters)
 
 μ = 1 / 60days
 
 @inline u_bottom_drag(i, j, grid, clock, fields, μ) = @inbounds - μ * fields.u[i, j, 1]
 @inline v_bottom_drag(i, j, grid, clock, fields, μ) = @inbounds - μ * fields.v[i, j, 1]
 
-u_bottom_drag_bc = BoundaryCondition(Flux,
-                                     u_bottom_drag,
-                                     discrete_form = true,
-                                     parameters = μ)
+u_bottom_drag_bc = FluxBoundaryCondition(u_bottom_drag,
+                                         discrete_form = true,
+                                         parameters = μ)
 
-v_bottom_drag_bc = BoundaryCondition(Flux,
-                                     v_bottom_drag,
-                                     discrete_form = true,
-                                     parameters = μ)
+v_bottom_drag_bc = FluxBoundaryCondition(v_bottom_drag,
+                                         discrete_form = true,
+                                         parameters = μ)
 
-u_bcs = UVelocityBoundaryConditions(grid,
-                                    top = surface_wind_stress_bc,
-                                    bottom = u_bottom_drag_bc)
+u_bcs = FieldBoundaryConditions(top = surface_wind_stress_bc,
+                                bottom = u_bottom_drag_bc)
 
-v_bcs = VVelocityBoundaryConditions(grid,
-                                    bottom = v_bottom_drag_bc)
+v_bcs = FieldBoundaryConditions(bottom = v_bottom_drag_bc)
 
 @show const νh₀ = 5e3 * (60 / grid.Nx)^2
 
 @inline νh(λ, φ, z, t) = νh₀ * cos(π * φ / 180)
 
-variable_horizontal_diffusivity = HorizontallyCurvilinearAnisotropicDiffusivity(νh=νh)
-constant_horizontal_diffusivity = HorizontallyCurvilinearAnisotropicDiffusivity(νh=νh₀)
+variable_horizontal_diffusivity = HorizontalScalarDiffusivity(ν = νh)
+constant_horizontal_diffusivity = HorizontalScalarDiffusivity(ν = νh₀)
 
 model = HydrostaticFreeSurfaceModel(grid = grid,
-                                    architecture = CPU(),
                                     momentum_advection = VectorInvariant(),
                                     free_surface = free_surface,
                                     coriolis = coriolis,
@@ -91,8 +94,8 @@ g = model.free_surface.gravitational_acceleration
 gravity_wave_speed = sqrt(g * grid.Lz) # hydrostatic (shallow water) gravity wave speed
 
 # Time-scale for gravity wave propagation across the smallest grid cell
-wave_propagation_time_scale = min(grid.radius * cosd(maximum(abs, grid.φᵃᶜᵃ)) * deg2rad(grid.Δλ),
-                                  grid.radius * deg2rad(grid.Δφ)) / gravity_wave_speed
+wave_propagation_time_scale = min(grid.radius * cosd(maximum(abs, grid.φᵃᶜᵃ)) * deg2rad(grid.Δλᶜᵃᵃ),
+                                  grid.radius * deg2rad(grid.Δφᵃᶜᵃ)) / gravity_wave_speed
 
 mutable struct Progress
     interval_start_time :: Float64
@@ -114,9 +117,9 @@ end
 
 simulation = Simulation(model,
                         Δt = 3600,
-                        stop_time = 1years,
-                        iteration_interval = 100,
-                        progress = Progress(time_ns()))
+                        stop_time = 1years)
+
+simulation.callbacks[:progress] = Callback(Progress(time_ns()), IterationInterval(20))
 
 output_fields = merge(model.velocities, (η=model.free_surface.η,))
 
@@ -124,9 +127,8 @@ output_prefix = "barotropic_gyre_Nx$(grid.Nx)_Ny$(grid.Ny)"
 
 simulation.output_writers[:fields] = JLD2OutputWriter(model, output_fields,
                                                       schedule = TimeInterval(10day),
-                                                      prefix = output_prefix,
-                                                      field_slicer = nothing,
-                                                      force = true)
+                                                      filename = output_prefix,
+                                                      overwrite_existing = true)
 
 run!(simulation)
 
@@ -136,4 +138,4 @@ run!(simulation)
 
 include("visualize_barotropic_gyre.jl")
 
-visualize_barotropic_gyre(simulation.output_writers[:fields])
+# visualize_barotropic_gyre(simulation.output_writers[:fields])
