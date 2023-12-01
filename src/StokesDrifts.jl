@@ -44,8 +44,11 @@ end
 """
     UniformStokesDrift(; ∂z_uˢ=addzero, ∂z_vˢ=addzero, ∂t_uˢ=addzero, ∂t_vˢ=addzero, parameters=nothing)
 
-Construct a set of functions of `(z, t)` that describes the Stokes drift field beneath
-a _horizontally-uniform_ surface gravity wave field.
+Construct a set of functions of `(z, t)` for a Stokes drift velocity field
+corresponding to a horizontally-uniform surface gravity wave field.
+
+To resolve the evolution of the Lagrangian-mean momentum, we require vertical-derivatives
+and time-derivatives of the horizontal components of the Stokes drift, `uˢ` and `vˢ`.
 """
 UniformStokesDrift(; ∂z_uˢ=addzero, ∂z_vˢ=addzero, ∂t_uˢ=addzero, ∂t_vˢ=addzero, parameters=nothing) =
     UniformStokesDrift(∂z_uˢ, ∂z_vˢ, ∂t_uˢ, ∂t_vˢ, parameters)
@@ -87,6 +90,35 @@ struct StokesDrift{P, VX, WX, UY, WY, UZ, VZ, UT, VT, WT}
     parameters :: P
 end
 
+"""
+    StokesDrift(; ∂z_uˢ=addzero, ∂y_uˢ=addzero, ∂t_uˢ=addzero, 
+                  ∂z_vˢ=addzero, ∂x_vˢ=addzero, ∂t_vˢ=addzero, 
+                  ∂x_wˢ=addzero, ∂y_wˢ=addzero, ∂t_wˢ=addzero, parameters=nothing)
+
+Construct a set of functions of space and time for a Stokes drift velocity field
+corresponding to a surface gravity wave field with an envelope that (potentially) varies
+in the horizontal directions.
+
+To resolve the evolution of the Lagrangian-mean momentum, we require all the components
+of the "psuedovorticity",
+
+```math
+∇ × uˢ = x̂ (∂y_wˢ - ∂z_vˢ) + ŷ (∂z_uˢ - ∂x_wˢ) + ẑ (∂x_vˢ - ∂y_uˢ)
+```
+
+as well as time-derivatives of uˢ, vˢ, and wˢ.
+
+Note that each function (e.g. ∂z_uˢ) is a function of horizontal coordinates and time.
+Thus, the correct function signature depends on the grid, since `Flat` horizontal directions
+are omitted.
+
+For example, on a grid with `topology = (Periodic, Flat, Bounded)` (and `parameters=nothing`),
+then `∂z_uˢ` (for example) should be callable via `∂z_uˢ(x, z, t)`.
+When `!isnothing(parameters)`, then in this case `∂z_uˢ` should be callable via `∂z_uˢ(x, z, t, parameters)`.
+
+Similarly, on a grid with `topology = (Periodic, Periodic, Bounded)` and `parameters=nothing`,
+`∂z_uˢ` should be callable via `∂z_uˢ(x, y, z, t)`.
+"""
 function StokesDrift(; ∂x_vˢ = addzero,
                        ∂x_wˢ = addzero,
                        ∂y_uˢ = addzero,
@@ -108,40 +140,55 @@ const SDnoP = StokesDrift{<:Nothing}
 @inline ∂t_vˢ(i, j, k, grid, sw::SD, time) = sw.∂t_vˢ(node(i, j, k, grid, c, f, c)..., time, sw.parameters)
 @inline ∂t_wˢ(i, j, k, grid, sw::SD, time) = sw.∂t_wˢ(node(i, j, k, grid, c, c, f)..., time, sw.parameters)
 
-@inline x_curl_Uˢ_cross_U(i, j, k, grid, sw::SD, U, time) = (  ℑxzᶠᵃᶜ(i, j, k, grid, U.w) * sw.∂z_uˢ(node(i, j, k, grid, f, c, c)..., time, sw.parameters)
-                                                             + ℑxyᶠᶜᵃ(i, j, k, grid, U.v) * sw.∂y_uˢ(node(i, j, k, grid, f, c, c)..., time, sw.parameters)
-                                                             - ℑxzᶠᵃᶜ(i, j, k, grid, U.w) * sw.∂x_wˢ(node(i, j, k, grid, f, c, c)..., time, sw.parameters)
-                                                             - ℑxyᶠᶜᵃ(i, j, k, grid, U.v) * sw.∂x_vˢ(node(i, j, k, grid, f, c, c)..., time, sw.parameters))
-
-@inline y_curl_Uˢ_cross_U(i, j, k, grid, sw::SD, U, time) = (  ℑyzᵃᶠᶜ(i, j, k, grid, U.w) * sw.∂z_vˢ(node(i, j, k, grid, c, f, c)..., time, sw.parameters)
-                                                             + ℑxyᶜᶠᵃ(i, j, k, grid, U.u) * sw.∂x_vˢ(node(i, j, k, grid, c, f, c)..., time, sw.parameters)
-                                                             - ℑyzᵃᶠᶜ(i, j, k, grid, U.w) * sw.∂y_wˢ(node(i, j, k, grid, c, f, c)..., time, sw.parameters)
-                                                             - ℑxyᶜᶠᵃ(i, j, k, grid, U.u) * sw.∂y_uˢ(node(i, j, k, grid, c, f, c)..., time, sw.parameters))
-
-@inline z_curl_Uˢ_cross_U(i, j, k, grid, sw::SD, U, time) = (  ℑxzᶜᵃᶠ(i, j, k, grid, U.u) * sw.∂x_wˢ(node(i, j, k, grid, c, c, f)..., time, sw.parameters)
-                                                             + ℑyzᵃᶜᶠ(i, j, k, grid, U.v) * sw.∂y_wˢ(node(i, j, k, grid, c, c, f)..., time, sw.parameters)
-                                                             - ℑxzᶜᵃᶠ(i, j, k, grid, U.u) * sw.∂z_uˢ(node(i, j, k, grid, c, c, f)..., time, sw.parameters)
-                                                             - ℑyzᵃᶜᶠ(i, j, k, grid, U.v) * sw.∂z_vˢ(node(i, j, k, grid, c, c, f)..., time, sw.parameters))
-
-
 @inline ∂t_uˢ(i, j, k, grid, sw::SDnoP, time) = sw.∂t_uˢ(node(i, j, k, grid, f, c, c)..., time)
 @inline ∂t_vˢ(i, j, k, grid, sw::SDnoP, time) = sw.∂t_vˢ(node(i, j, k, grid, c, f, c)..., time)
 @inline ∂t_wˢ(i, j, k, grid, sw::SDnoP, time) = sw.∂t_wˢ(node(i, j, k, grid, c, c, f)..., time)
 
-@inline x_curl_Uˢ_cross_U(i, j, k, grid, sw::SDnoP, U, time) = (  ℑxzᶠᵃᶜ(i, j, k, grid, U.w) * sw.∂z_uˢ(node(i, j, k, grid, f, c, c)..., time)
-                                                                + ℑxyᶠᶜᵃ(i, j, k, grid, U.v) * sw.∂y_uˢ(node(i, j, k, grid, f, c, c)..., time)
-                                                                - ℑxzᶠᵃᶜ(i, j, k, grid, U.w) * sw.∂x_wˢ(node(i, j, k, grid, f, c, c)..., time)
-                                                                - ℑxyᶠᶜᵃ(i, j, k, grid, U.v) * sw.∂x_vˢ(node(i, j, k, grid, f, c, c)..., time))
+@inline parameters_tuple(sw::SDnoP) = tuple()
+@inline parameters_tuple(sw::SD) = tuple(sw.parameters)
 
-@inline y_curl_Uˢ_cross_U(i, j, k, grid, sw::SDnoP, U, time) = (  ℑyzᵃᶠᶜ(i, j, k, grid, U.w) * sw.∂z_vˢ(node(i, j, k, grid, c, f, c)..., time)
-                                                                + ℑxyᶜᶠᵃ(i, j, k, grid, U.u) * sw.∂x_vˢ(node(i, j, k, grid, c, f, c)..., time)
-                                                                - ℑyzᵃᶠᶜ(i, j, k, grid, U.w) * sw.∂y_wˢ(node(i, j, k, grid, c, f, c)..., time)
-                                                                - ℑxyᶜᶠᵃ(i, j, k, grid, U.u) * sw.∂y_uˢ(node(i, j, k, grid, c, f, c)..., time))
+@inline function x_curl_Uˢ_cross_U(i, j, k, grid, sw::SD, U, time)
+    wᶠᶜᶜ = ℑxzᶠᵃᶜ(i, j, k, grid, U.w) 
+    vᶠᶜᶜ = ℑxyᶠᶜᵃ(i, j, k, grid, U.v) 
 
-@inline z_curl_Uˢ_cross_U(i, j, k, grid, sw::SDnoP, U, time) = (  ℑxzᶜᵃᶠ(i, j, k, grid, U.u) * sw.∂x_wˢ(node(i, j, k, grid, c, c, f)..., time)
-                                                                + ℑyzᵃᶜᶠ(i, j, k, grid, U.v) * sw.∂y_wˢ(node(i, j, k, grid, c, c, f)..., time)
-                                                                - ℑxzᶜᵃᶠ(i, j, k, grid, U.u) * sw.∂z_uˢ(node(i, j, k, grid, c, c, f)..., time)
-                                                                - ℑyzᵃᶜᶠ(i, j, k, grid, U.v) * sw.∂z_vˢ(node(i, j, k, grid, c, c, f)..., time))
+    pt = parameters_tuple(sw)
+    X = node(i, j, k, grid, f, c, c)
+    ∂z_uˢ = sw.∂z_uˢ(X..., time, pt...)
+    ∂x_wˢ = sw.∂x_wˢ(X..., time, pt...)
+    ∂y_uˢ = sw.∂y_uˢ(X..., time, pt...)
+    ∂x_vˢ = sw.∂x_vˢ(X..., time, pt...)
+
+    return wᶠᶜᶜ * (∂z_uˢ - ∂x_wˢ) - vᶠᶜᶜ * (∂x_vˢ - ∂y_uˢ)
+end
+
+
+@inline function y_curl_Uˢ_cross_U(i, j, k, grid, sw::SD, U, time)
+    wᶜᶠᶜ = ℑyzᵃᶠᶜ(i, j, k, grid, U.w)
+    uᶜᶠᶜ = ℑxyᶜᶠᵃ(i, j, k, grid, U.u)
+
+    pt = parameters_tuple(sw)
+    X = node(i, j, k, grid, c, f, c)
+    ∂z_vˢ = sw.∂z_vˢ(X..., time, pt...)
+    ∂y_wˢ = sw.∂y_wˢ(X..., time, pt...)
+    ∂x_vˢ = sw.∂x_vˢ(X..., time, pt...)
+    ∂y_uˢ = sw.∂y_uˢ(X..., time, pt...)
+
+    return uᶜᶠᶜ * (∂x_vˢ - ∂y_uˢ) - wᶜᶠᶜ * (∂y_wˢ - ∂z_vˢ)
+end
+
+@inline function z_curl_Uˢ_cross_U(i, j, k, grid, sw::SDnoP, U, time)
+    uᶜᶜᶠ = ℑxzᶜᵃᶠ(i, j, k, grid, U.u)
+    vᶜᶜᶠ = ℑyzᵃᶜᶠ(i, j, k, grid, U.w)
+
+    pt = parameters_tuple(sw)
+    X = node(i, j, k, grid, c, c, f)
+    ∂x_wˢ = sw.∂x_wˢ(X..., time, pt...)
+    ∂z_uˢ = sw.∂z_uˢ(X..., time, pt...)
+    ∂y_wˢ = sw.∂y_wˢ(X..., time, pt...)
+    ∂z_vˢ = sw.∂y_wˢ(X..., time, pt...)
+
+    return vᶜᶜᶠ * (∂y_wˢ - ∂z_vˢ) - uᶜᶜᶠ * (∂z_uˢ - ∂x_wˢ)
+end
 
 end # module
 
