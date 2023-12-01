@@ -19,9 +19,9 @@ const Uˢ = ϵ^2 * c
 
 # Write the Stokes drift as
 #
-# uˢ(x, z, t) = A(x, t) * ûˢ(z)
+# uˢ(x, z, t) = A(x - cᵍ * t) * ûˢ(z)
 #
-# which implies
+# which describes a wave packet propogating with speed cᵍ. This implies
 
 @inline    ûˢ(z)       = Uˢ * exp(2k * z)
 @inline    uˢ(x, z, t) =         A(x - cᵍ * t) * ûˢ(z)
