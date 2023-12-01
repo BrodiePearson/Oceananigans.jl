@@ -1,48 +1,15 @@
-# # Langmuir turbulence example
+# This validation case simulates Langmuir turbulence under a spatially-varying wave field
 #
-# This example implements a Langmuir turbulence simulation reported in section
-# 4 of
-#
-# > [Wagner et al., "Near-inertial waves and turbulence driven by the growth of swell", Journal of Physical Oceanography (2021)](https://journals.ametsoc.org/view/journals/phoc/51/5/JPO-D-20-0178.1.xml)
-#
-# This example demonstrates
-#
-#   * How to run large eddy simulations with surface wave effects via the
-#     Craik-Leibovich approximation.
-#
-#   * How to specify time- and horizontally-averaged output.
-
-# ## Install dependencies
-#
-# First let's make sure we have all required packages installed.
-
-# ```julia
-# using Pkg
-# pkg"add Oceananigans, CairoMakie"
-# ```
+# The code is based on the existing Oceananigans Langmuir turbulence example
 
 using Oceananigans
 using Oceananigans.Units: minute, minutes, hours
-
-# ## Model set-up
-#
-# To build the model, we specify the grid, Stokes drift, boundary conditions, and
-# Coriolis parameter.
-#
-# ### Domain and numerical grid specification
-#
-# We use a modest resolution and the same total extent as Wagner et al. 2021,
 
 grid = RectilinearGrid(size=(32, 64, 32), extent=(128, 256, 64))
 
 # ### The Stokes Drift profile
 #
-# The surface wave Stokes drift profile prescribed in Wagner et al. 2021,
-# corresponds to a 'monochromatic' (that is, single-frequency) wave field.
-#
-# A monochromatic wave field is characterized by its wavelength and amplitude
-# (half the distance from wave crest to wave trough), which determine the wave
-# frequency and the vertical scale of the Stokes drift profile.
+# We utilize the same monochromatic wave parameters as Wagner et al. 2021,
 
 using Oceananigans.BuoyancyModels: g_Earth
 
@@ -51,31 +18,24 @@ wavelength = 60  # m
 wavenumber = 2π / wavelength # m⁻¹
  frequency = sqrt(g_Earth * wavenumber) # s⁻¹
 
-## The vertical scale over which the Stokes drift of a monochromatic surface wave
-## decays away from the surface is `1/2wavenumber`, or
 const vertical_scale = wavelength / 4π
 
-## Stokes drift velocity at the surface
 const Uˢ = amplitude^2 * wavenumber * frequency # m s⁻¹
 
 stokes_jet_center = 70
 stokes_jet_central_width = 40
 stokes_jet_edge_width = 40
 
-# The `const` declarations ensure that Stokes drift functions compile on the GPU.
-# To run this example on the GPU, include `GPU()` in the
-# constructor for `RectilinearGrid` above.
-#
 # The Stokes drift profile is
-
-#uˢ(x, y, z, t) = Uˢ * exp(z / vertical_scale) * exp( - (y - stokes_jet_center)^2 / (2 * stokes_jet_width^2) )
-
+#
+# ``uˢ(x, y, z, t) = Uˢ * exp(z / vertical_scale) * exp( - (y - stokes_jet_center)^2 / (2 * stokes_jet_width^2) )``
+#
 # Create a Stokes drift field that is a cosine function within a subregion of the domain.
 # This function peaks at `y = stokes_jet_center` with a  value of `2*Uˢ`, reaches zero at a distance of 
 # `stokes_jet_width` either side of the peak, and is zero beyond those regions. 
 # The zeroing of regions outside the jet is achieved through application of a Heaviside function
-#uˢ(x, y, z, t) = Uˢ * exp(z / vertical_scale) * 0.5 * (1 + cos(pi * (y - stokes_jet_center) / stokes_jet_width)) *
-# 0.5 * (sign(y - stokes_jet_center + stokes_jet_width)  -  sign(y - stokes_jet_center - stokes_jet_width) )
+# ``uˢ(x, y, z, t) = Uˢ * exp(z / vertical_scale) * 0.5 * (1 + cos(pi * (y - stokes_jet_center) / stokes_jet_width)) *
+# 0.5 * (sign(y - stokes_jet_center + stokes_jet_width)  -  sign(y - stokes_jet_center - stokes_jet_width) )``
 
 uˢ(x, y, z, t) = Uˢ * exp(z / vertical_scale) * 0.5 * (
     (1 + cos(pi * (y - stokes_jet_center + stokes_jet_central_width / 2) / stokes_jet_edge_width)) * 
@@ -144,20 +104,9 @@ wˢ(x, y, z, t) = 2 * pi / grid.Lx *vertical_scale * Uˢ * ( exp(z / vertical_sc
     0.5 * 0.1 * cos(2 * pi * (x - grid.Lx/2) / grid.Lx )
 
 #
-# !!! info "The Craik-Leibovich equations in Oceananigans"
-#     Oceananigans implements the Craik-Leibovich approximation for surface wave effects
-#     using the _Lagrangian-mean_ velocity field as its prognostic momentum variable.
-#     In other words, `model.velocities.u` is the Lagrangian-mean ``x``-velocity beneath surface
-#     waves. This differs from models that use the _Eulerian-mean_ velocity field
-#     as a prognostic variable, but has the advantage that ``u`` accounts for the total advection
-#     of tracers and momentum, and that ``u = v = w = 0`` is a steady solution even when Coriolis
-#     forces are present. See the
-#     [physics documentation](https://clima.github.io/OceananigansDocumentation/stable/physics/surface_gravity_waves/)
-#     for more information.
-#
 # Finally, we note that the time-derivative of the Stokes drift must be provided
 # if the Stokes drift and surface wave field undergoes _forced_ changes in time.
-# In this example, the Stokes drift is constant
+# In this example, the Stokes drift is constant **in time**
 # and thus the time-derivative of the Stokes drift is 0.
 
 # ### Boundary conditions
@@ -233,21 +182,11 @@ wᵢ(x, y, z) = u★ * 1e-1 * Ξ(z)
 
 set!(model, u=uᵢ, w=wᵢ, b=bᵢ)
 
-# ## Setting up the simulation
-
 simulation = Simulation(model, Δt=45.0, stop_time=4hours)
-
-# We use the `TimeStepWizard` for adaptive time-stepping
-# with a Courant-Freidrichs-Lewy (CFL) number of 1.0,
 
 wizard = TimeStepWizard(cfl=1.0, max_change=1.1, max_Δt=1minute)
 
 simulation.callbacks[:wizard] = Callback(wizard, IterationInterval(10))
-
-# ### Nice progress messaging
-#
-# We define a function that prints a helpful message with
-# maximum absolute value of ``u, v, w`` and the current wall clock time.
 
 using Printf
 
@@ -269,13 +208,6 @@ end
 
 simulation.callbacks[:progress] = Callback(progress, IterationInterval(20))
 
-# ## Output
-#
-# ### A field writer
-#
-# We set up an output writer for the simulation that saves all velocity fields,
-# tracer fields, and the subgrid turbulent diffusivity.
-
 output_interval = 5minutes
 
 fields_to_output = merge(model.velocities, model.tracers, (; νₑ=model.diffusivity_fields.νₑ))
@@ -285,11 +217,6 @@ simulation.output_writers[:fields] =
                      schedule = TimeInterval(output_interval),
                      filename = "Stokes_drift_jet_fields.jld2",
                      overwrite_existing = true)
-
-# ### An "averages" writer
-#
-# We also set up output of time- and horizontally-averaged velocity field and
-# momentum fluxes,
 
 u, v, w = model.velocities
 b = model.tracers.b
@@ -306,17 +233,7 @@ simulation.output_writers[:averages] =
                      filename = "Stokes_drift_jet_averages.jld2",
                      overwrite_existing = true)
 
-# ## Running the simulation
-#
-# This part is easy,
-
 run!(simulation)
-
-# # Making a neat movie
-#
-# We look at the results by loading data from file with FieldTimeSeries,
-# and plotting vertical slices of ``u`` and ``w``, and a horizontal
-# slice of ``w`` to look for Langmuir cells.
 
 using CairoMakie
 
@@ -333,10 +250,6 @@ times = time_series.w.times
 xw, yw, zw = nodes(time_series.w)
 xu, yu, zu = nodes(time_series.u)
 nothing #hide
-
-# We are now ready to animate using Makie. We use Makie's `Observable` to animate
-# the data. To dive into how `Observable`s work we refer to
-# [Makie.jl's Documentation](https://makie.juliaplots.org/stable/documentation/nodes/index.html).
 
 n = Observable(1)
 
@@ -371,10 +284,6 @@ ax_xy_stokesw = Axis(fig[1, 4];
 ax_y_stokesw = Axis(fig[2, 1];
             xlabel = string("wˢ(x=", 3*grid.Lx/8, "m, z=-2m) terms ([m] s⁻¹)"),
             ylabel = "y (m)")
-
-#ax_B = Axis(fig[2, 4];
-#            xlabel = "Buoyancy (m s⁻²)",
-#            ylabel = "z (m)")
 
 ax_U = Axis(fig[3, 4];
             xlabel = "Velocities (m s⁻¹)",
